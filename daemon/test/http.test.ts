@@ -7,11 +7,11 @@ import { startServer } from "../src/server";
 import { fixture, terminal, workspace } from "./helpers";
 
 let f: ReturnType<typeof fixture>;
-let app: ReturnType<typeof startServer>;
+let app: Awaited<ReturnType<typeof startServer>>;
 let base: string;
-beforeEach(() => {
+beforeEach(async () => {
   f = fixture();
-  app = startServer({ ...f.config, workspacesDir: join(f.root, "missing", "workspaces") });
+  app = await startServer({ ...f.config, workspacesDir: join(f.root, "missing", "workspaces") });
   base = `http://127.0.0.1:${app.server.port}`;
 });
 afterEach(async () => { await app.stop(); f.cleanup(); });

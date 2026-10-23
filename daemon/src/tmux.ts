@@ -22,6 +22,9 @@ export class Tmux {
     // A daemon started inside tmux must still use the configured/default socket.
     delete env.TMUX;
     const child = Bun.spawn(["tmux", ...(this.socket ? ["-S", this.socket] : []), ...args], {
+      // The first client starts the server. Isolate it from wsd's process group
+      // so a Ctrl-C sent to the daemon's whole group cannot kill its terminals.
+      detached: true,
       env, stdin: "ignore", stdout: "pipe", stderr: "pipe",
     });
     const [code, stdout, stderr] = await Promise.all([

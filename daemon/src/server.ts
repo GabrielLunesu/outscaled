@@ -5,11 +5,15 @@ import { createHealthRoute } from "./routes/health";
 import { createTerminalsRoute } from "./routes/terminals";
 import { createWorkspacesRoute } from "./routes/workspaces";
 import { State } from "./state";
+import { Terminals } from "./terminals";
+import { Tmux } from "./tmux";
 
-export function startServer(config: Config) {
+export async function startServer(config: Config) {
   const state = new State(config.statePath);
   try {
-    const context: RouteContext = { config, state };
+    const terminals = new Terminals(state, new Tmux(config.tmuxSocket));
+    await terminals.reconcile();
+    const context: RouteContext = { config, state, terminals };
     const routes = [createHealthRoute(context), createWorkspacesRoute(context), createTerminalsRoute(context)];
     const server = Bun.serve({
       hostname: "127.0.0.1",

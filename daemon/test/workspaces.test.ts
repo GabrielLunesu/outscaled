@@ -8,11 +8,11 @@ import { fixture } from "./helpers";
 import { localRepository } from "./workspace-helpers";
 
 let f: ReturnType<typeof fixture>;
-let app: ReturnType<typeof startServer>;
+let app: Awaited<ReturnType<typeof startServer>>;
 let url: string;
-beforeEach(() => {
+beforeEach(async () => {
   f = fixture();
-  app = startServer(f.config);
+  app = await startServer(f.config);
   url = `http://127.0.0.1:${app.server.port}/v1/workspaces`;
 });
 afterEach(async () => { await app.stop(); f.cleanup(); });
@@ -33,7 +33,7 @@ test("creates an empty folder and missing workspaces root; listing survives rest
   expect(readdirSync(ws.path)).toEqual([]);
   expect(app.state.getWorkspace("empty")).toEqual(ws);
   await app.stop();
-  app = startServer(f.config);
+  app = await startServer(f.config);
   url = `http://127.0.0.1:${app.server.port}/v1/workspaces`;
   expect(await (await fetch(url)).json()).toEqual([ws]);
 });

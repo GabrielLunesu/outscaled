@@ -7,7 +7,7 @@ import { Tmux } from "../src/tmux";
 import { fixture, workspace } from "./helpers";
 
 let f: ReturnType<typeof fixture>;
-let app: ReturnType<typeof startServer>;
+let app: Awaited<ReturnType<typeof startServer>>;
 let tmux: Tmux;
 let base: string;
 let folder: string;
@@ -28,7 +28,7 @@ async function eventually(check: () => Promise<boolean>) {
   throw new Error("Timed out waiting for terminal process");
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   f = fixture();
   originalShell = process.env.SHELL;
   originalHome = process.env.HOME;
@@ -36,7 +36,7 @@ beforeEach(() => {
   process.env.HOME = f.root;
   folder = join(realpathSync(f.root), "workspace with 'quotes'");
   mkdirSync(folder);
-  app = startServer(f.config);
+  app = await startServer(f.config);
   app.state.insertWorkspace({ ...workspace, path: folder });
   tmux = new Tmux(f.env.WSD_TMUX_SOCKET);
   base = `http://127.0.0.1:${app.server.port}/v1/workspaces`;

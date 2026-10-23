@@ -1,9 +1,9 @@
 import { loadConfig } from "./config";
 import { startServer } from "./server";
 
-export function runDaemon(): void {
+export async function runDaemon(): Promise<void> {
   try {
-    const app = startServer(loadConfig());
+    const app = await startServer(loadConfig());
     console.log(`wsd listening on http://127.0.0.1:${app.server.port}`);
     const stop = () => {
       process.off("SIGINT", stop);
