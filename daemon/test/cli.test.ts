@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { readlinkSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, readlinkSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
-import { Health } from "@outscaled/protocol";
+import { Health, Workspace } from "@outscaled/protocol";
 import { fixture } from "./helpers";
+import { localRepository } from "./workspace-helpers";
 
 const root = join(import.meta.dir, "..");
 
@@ -89,17 +90,41 @@ for (const mode of ["source", "compiled"] as const) {
       expect(Health.parse(JSON.parse(curl.stdout)).version).toBe("0.0.0");
     }, 10000);
 
-    test("remote names and stub commands fail clearly", async () => {
+    test("remote names fail clearly", async () => {
       for (const command of [["health"], ["new", "demo"], ["term", "ls", "demo"]]) {
         const remote = await execute([...cli, ...command, "--on", "example"], env);
         expect(remote.code).toBe(1);
         expect(remote.stderr).toContain("remote servers aren't supported yet");
       }
-      for (const args of [["new", "demo", "--repo", "example-repo"]]) {
-        const result = await execute([...cli, ...args], env);
-        expect(result.code).toBe(1);
-        expect(result.stderr).toBe("ws: not implemented yet\n");
-      }
+    }, 10000);
+
+    test("ws new clones demo, registers mine in place, and the API lists both", async () => {
+      const repo = localRepository(f.root);
+      const demoPath = join(f.config.workspacesDir, "demo");
+      expect(await execute([...cli, "new", "demo", "--repo", repo, "--on", "local"], env))
+        .toEqual({ code: 0, stdout: `${demoPath}\n`, stderr: "" });
+      expect(readFileSync(join(demoPath, "README.md"), "utf8")).toBe("workspace fixture\n");
+      expect(statSync(join(demoPath, ".git")).isDirectory()).toBe(true);
+
+      const existing = join(f.root, "existing folder");
+      mkdirSync(existing);
+      writeFileSync(join(existing, "keep"), "unchanged");
+      const before = statSync(existing);
+      const mine = await execute([...cli, "new", "mine", "--path", existing, "--json"], env);
+      expect(mine.code).toBe(0);
+      expect(mine.stderr).toBe("");
+      const workspace = Workspace.parse(JSON.parse(mine.stdout));
+      expect(workspace).toMatchObject({ slug: "mine", path: existing, repo: null, inPlace: true });
+      expect(readdirSync(existing)).toEqual(["keep"]);
+      expect(readFileSync(join(existing, "keep"), "utf8")).toBe("unchanged");
+      expect(statSync(existing).mtimeMs).toBe(before.mtimeMs);
+
+      const response = await fetch(`${address}/v1/workspaces`);
+      expect(response.status).toBe(200);
+      const listed = Workspace.array().parse(await response.json());
+      expect(listed).toHaveLength(2);
+      expect(listed[0]).toMatchObject({ slug: "demo", path: demoPath, repo, inPlace: false });
+      expect(listed[1]).toEqual(workspace);
     }, 10000);
 
     test("dispatch prints usage and command groups reject unrelated options", async () => {
