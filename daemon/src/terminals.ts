@@ -12,13 +12,23 @@ export class Terminals {
 
   reconcile(): Promise<void> {
     return this.serial(async () => {
-      const sessions = new Map((await this.tmux.listSessions()).map(session => [session.name, session.pid]));
+      const sessions = new Map((await this.tmux.listPanes()).map(pane => [pane.name, pane]));
+      for (const terminal of this.state.listTerminals()) {
+        if (terminal.alwaysOn && sessions.has(terminal.session)) await this.tmux.retainPane(terminal.session);
+      }
       this.state.db.transaction(() => {
         for (const terminal of this.state.listTerminals()) {
-          const pid = sessions.get(terminal.session);
-          this.state.updateTerminalState(terminal.id, pid === undefined
+          const pane = sessions.get(terminal.session);
+          // A dead, exhausted always-on pane must stay crashed across restarts.
+          if (terminal.alwaysOn && terminal.state === "crashed" && (!pane || pane.dead)) {
+            sessions.delete(terminal.session);
+            continue;
+          }
+          this.state.updateTerminalState(terminal.id, pane === undefined
             ? { state: "exited", pid: null }
-            : { state: "running", pid });
+            : pane.dead
+              ? { state: terminal.alwaysOn ? "restarting" : "exited", pid: null }
+              : { state: "running", pid: pane.pid });
           sessions.delete(terminal.session);
         }
       })();
@@ -28,8 +38,8 @@ export class Terminals {
     });
   }
 
-  // Keep reconciliation from racing an open between its tmux and SQLite writes.
-  private serial<T>(action: () => Promise<T>): Promise<T> {
+  // Reconciliation, HTTP operations and supervision share one lifecycle lock.
+  serial<T>(action: () => Promise<T>): Promise<T> {
     const result = this.pending.then(action);
     this.pending = result.catch(() => {});
     return result;
@@ -43,7 +53,7 @@ export class Terminals {
       const shell = process.env.SHELL || userInfo().shell || "/bin/sh";
       let pid: number;
       try {
-        pid = await this.tmux.createSession(session, workspace.path, shell, request.command);
+        pid = await this.tmux.createSession(session, workspace.path, shell, request.command, request.alwaysOn);
       } catch (error) {
         // Another client may have created the session since has-session.
         if (await this.tmux.hasSession(session)) throw conflict();
@@ -71,7 +81,7 @@ export class Terminals {
     return this.serial(async () => {
       const sessions = new Set((await this.tmux.listSessions()).map(session => session.name));
       return this.state.listTerminals(workspace).map(terminal => {
-        if (!sessions.has(terminal.session)) {
+        if (!sessions.has(terminal.session) && terminal.state !== "crashed") {
           return this.state.updateTerminalState(terminal.id, { state: "exited", pid: null })!;
         }
         return terminal;
