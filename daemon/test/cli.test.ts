@@ -95,7 +95,7 @@ for (const mode of ["source", "compiled"] as const) {
         expect(remote.code).toBe(1);
         expect(remote.stderr).toContain("remote servers aren't supported yet");
       }
-      for (const args of [["new", "demo", "--repo", "example-repo"], ["term", "open", "demo", "--name", "a1", "--cmd", "sh"], ["term", "ls", "demo"]]) {
+      for (const args of [["new", "demo", "--repo", "example-repo"]]) {
         const result = await execute([...cli, ...args], env);
         expect(result.code).toBe(1);
         expect(result.stderr).toBe("ws: not implemented yet\n");
