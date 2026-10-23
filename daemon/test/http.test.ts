@@ -58,13 +58,11 @@ test("unknown paths and methods return JSON 404", async () => {
   }
 });
 
-test("valid workspace and terminal requests are registered as 501 stubs", async () => {
+test("valid workspace requests are registered as 501 stubs", async () => {
   for (const [path, body] of [
     ["/v1/workspaces", undefined], ["/v1/workspaces", { slug: "a" }],
     ["/v1/workspaces", { slug: "a", repo: "example-repo" }],
     ["/v1/workspaces", { slug: "a", path: "/example/project" }],
-    ["/v1/workspaces/demo/terminals", undefined], ["/v1/workspaces/demo/terminals", { name: "shell" }],
-    ["/v1/workspaces/demo/terminals", { name: "a1", command: "sh", alwaysOn: true }],
   ] as const) {
     const response = await fetch(`${base}${path}`, { method: body ? "POST" : "GET", body: body ? JSON.stringify(body) : undefined });
     expect(response.status).toBe(501);
