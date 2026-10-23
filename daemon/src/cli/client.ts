@@ -11,7 +11,7 @@ export function createClient(server = "local", env: NodeJS.ProcessEnv = process.
   const address = `http://127.0.0.1:${parsePort(env.WSD_PORT)}`;
 
   return {
-    async request(method: string, path: string, body?: unknown): Promise<unknown> {
+    async request(method: string, path: string, body?: unknown, timeoutMs = 3000): Promise<unknown> {
       const payload = body === undefined ? undefined : JSON.stringify(body);
       let response: Response;
       let raw: string;
@@ -20,7 +20,7 @@ export function createClient(server = "local", env: NodeJS.ProcessEnv = process.
           method,
           headers: payload === undefined ? undefined : { "Content-Type": "application/json" },
           body: payload,
-          signal: AbortSignal.timeout(3000),
+          signal: AbortSignal.timeout(timeoutMs),
         });
         raw = await response.text();
       } catch {

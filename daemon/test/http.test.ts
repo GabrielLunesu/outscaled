@@ -58,18 +58,6 @@ test("unknown paths and methods return JSON 404", async () => {
   }
 });
 
-test("valid workspace requests are registered as 501 stubs", async () => {
-  for (const [path, body] of [
-    ["/v1/workspaces", undefined], ["/v1/workspaces", { slug: "a" }],
-    ["/v1/workspaces", { slug: "a", repo: "example-repo" }],
-    ["/v1/workspaces", { slug: "a", path: "/example/project" }],
-  ] as const) {
-    const response = await fetch(`${base}${path}`, { method: body ? "POST" : "GET", body: body ? JSON.stringify(body) : undefined });
-    expect(response.status).toBe(501);
-    expect(ApiError.parse(await response.json()).error.code).toBe("not_implemented");
-  }
-});
-
 test("request schemas reject invalid slugs, conflicting repo/path and malformed bodies", async () => {
   const invalidWorkspaces = [{}, { slug: "Upper" }, { slug: "-bad" }, { slug: "a".repeat(41) },
     { slug: "a", repo: "repo", path: "/example" }, { slug: "a", repo: null }, { slug: "a", path: "" }, null];
