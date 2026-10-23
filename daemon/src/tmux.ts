@@ -3,6 +3,14 @@ export interface TmuxSession {
   pid: number;
 }
 
+export interface TmuxPane extends TmuxSession {
+  pane: string;
+  dead: boolean;
+  exitStatus: number | null;
+  exitSignal: string | null;
+  diedAt: number | null;
+}
+
 class TmuxError extends Error {
   constructor(readonly stderr: string) {
     super(`tmux: ${stderr.trim()}`);
@@ -34,16 +42,63 @@ export class Tmux {
     return stdout.trim();
   }
 
-  async createSession(name: string, folder: string, shell: string, command?: string): Promise<number> {
+  async createSession(name: string, folder: string, shell: string, command?: string, alwaysOn = false): Promise<number> {
     // Multiple command arguments make tmux exec the shell directly, without an
     // extra shell interpreting the user's command or paths a second time.
+    const args = [shell, "-l", ...(command === undefined ? [] : ["-c", `exec ${command}`])];
     const pid = await this.run([
       "new-session", "-d", "-s", name, "-c", folder, "-P", "-F", "#{pane_pid}",
-      shell, "-l", ...(command === undefined ? [] : ["-c", `exec ${command}`]),
+      // Hold the pane open until its local option is set, even for commands
+      // that exit immediately. Never change tmux's global defaults.
+      ...(alwaysOn ? ["/bin/sleep", "600"] : args),
     ]);
+    if (alwaysOn) {
+      try {
+        await this.retainPane(name);
+        await this.run(["respawn-pane", "-k", "-t", `=${name}:`, "-c", folder, ...args]);
+        return this.panePid(await this.run(["display-message", "-p", "-t", `=${name}:`, "#{pane_pid}"]));
+      } catch (error) {
+        await this.killSession(name);
+        throw error;
+      }
+    }
+    return this.panePid(pid);
+  }
+
+  private panePid(pid: string): number {
     const value = Number(pid);
     if (!Number.isSafeInteger(value) || value <= 0) throw new Error("tmux returned an invalid pane pid");
     return value;
+  }
+
+  async retainPane(name: string): Promise<void> {
+    await this.run(["set-option", "-t", `=${name}:`, "remain-on-exit", "on"]);
+  }
+
+  async respawnPane(pane: string, folder: string): Promise<number> {
+    // Omitting the command reuses the exact original argv, including the
+    // login shell and its quoting. Without -k we cannot kill a live process.
+    await this.run(["respawn-pane", "-t", pane, "-c", folder]);
+    return this.panePid(await this.run(["display-message", "-p", "-t", pane, "#{pane_pid}"]));
+  }
+
+  async listPanes(): Promise<TmuxPane[]> {
+    let output: string;
+    try {
+      output = await this.run(["list-panes", "-a", "-F",
+        "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_dead_signal}\t#{pane_dead_time}"]);
+    } catch (error) {
+      if (noServer(error)) return [];
+      throw error;
+    }
+    return output ? output.split("\n").map(line => {
+      const [name, pid, pane, dead, status, signal, time] = line.split("\t");
+      return {
+        name: name!, pid: Number(pid), pane: pane!, dead: dead === "1",
+        exitStatus: status ? Number(status) : null, exitSignal: signal || null,
+        diedAt: time ? Number(time) * 1000 : null,
+      };
+    }) : [];
   }
 
   async hasSession(name: string): Promise<boolean> {

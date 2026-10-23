@@ -5,14 +5,17 @@ import { createHealthRoute } from "./routes/health";
 import { createTerminalsRoute } from "./routes/terminals";
 import { createWorkspacesRoute } from "./routes/workspaces";
 import { State } from "./state";
+import { Supervisor, type SupervisorOptions } from "./supervisor";
 import { Terminals } from "./terminals";
 import { Tmux } from "./tmux";
 
-export async function startServer(config: Config) {
+export async function startServer(config: Config, supervisorOptions?: SupervisorOptions) {
   const state = new State(config.statePath);
   try {
-    const terminals = new Terminals(state, new Tmux(config.tmuxSocket));
+    const tmux = new Tmux(config.tmuxSocket);
+    const terminals = new Terminals(state, tmux);
     await terminals.reconcile();
+    const supervisor = new Supervisor(state, tmux, terminals, supervisorOptions);
     const context: RouteContext = { config, state, terminals };
     const routes = [createHealthRoute(context), createWorkspacesRoute(context), createTerminalsRoute(context)];
     const server = Bun.serve({
@@ -30,10 +33,12 @@ export async function startServer(config: Config) {
         return apiError(500, "internal_error", "Internal server error");
       },
     });
+    supervisor.start();
     return {
       server,
       state,
       async stop() {
+        await supervisor.stop();
         await server.stop(true);
         state.close();
       },
