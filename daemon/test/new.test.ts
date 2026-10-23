@@ -8,8 +8,8 @@ import { fixture } from "./helpers";
 import { localRepository } from "./workspace-helpers";
 
 let f: ReturnType<typeof fixture>;
-let app: ReturnType<typeof startServer>;
-beforeEach(() => { f = fixture(); app = startServer(f.config); });
+let app: Awaited<ReturnType<typeof startServer>>;
+beforeEach(async () => { f = fixture(); app = await startServer(f.config); });
 afterEach(async () => { await app.stop(); f.cleanup(); });
 
 async function cli(args: string[], env: NodeJS.ProcessEnv = {}) {

@@ -287,7 +287,7 @@ scripts/serial.sh                    one build or full test suite at a time
 
 - [ ] `ws new <slug> --on <server> [--repo <url> | --path <dir>]` creates the folder and clones the repo, or registers an existing folder in place.
 - [x] `ws term open <workspace> --name a1 --cmd claude` creates tmux session `ws-<workspace>-a1`, and herdr can attach to it.
-- [ ] Killing `wsd` leaves terminals running; restarting it re-adopts them.
+- [x] Killing `wsd` leaves terminals running; restarting it re-adopts them.
 - [ ] An always-on agent killed with `kill -9` restarts within 5 s.
 - [ ] `GET /health` returns CPU, RAM, disk and terminal count on both the Mac and the VPS.
 

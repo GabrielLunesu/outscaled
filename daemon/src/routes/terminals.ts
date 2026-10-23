@@ -1,11 +1,10 @@
 import { OpenTerminalRequest, Slug } from "@outscaled/protocol";
 import type { RouteContext } from "../context";
 import { apiError, validateBody } from "../http";
-import { TerminalConflict, Terminals } from "../terminals";
-import { Tmux } from "../tmux";
+import { TerminalConflict } from "../terminals";
 
 export function createTerminalsRoute(context: RouteContext) {
-  const terminals = new Terminals(context.state, new Tmux(context.config.tmuxSocket));
+  const { terminals } = context;
   return async (request: Request): Promise<Response | undefined> => {
     const match = /^\/v1\/workspaces\/([^/]+)\/terminals$/.exec(new URL(request.url).pathname);
     if (!match || (request.method !== "GET" && request.method !== "POST")) return;

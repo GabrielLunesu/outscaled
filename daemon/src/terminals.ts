@@ -10,6 +10,24 @@ export class Terminals {
 
   constructor(private readonly state: State, private readonly tmux: Tmux) {}
 
+  reconcile(): Promise<void> {
+    return this.serial(async () => {
+      const sessions = new Map((await this.tmux.listSessions()).map(session => [session.name, session.pid]));
+      this.state.db.transaction(() => {
+        for (const terminal of this.state.listTerminals()) {
+          const pid = sessions.get(terminal.session);
+          this.state.updateTerminalState(terminal.id, pid === undefined
+            ? { state: "exited", pid: null }
+            : { state: "running", pid });
+          sessions.delete(terminal.session);
+        }
+      })();
+      for (const name of sessions.keys()) {
+        if (name.startsWith("ws-")) console.log(`wsd: leaving untracked tmux session ${name} alone`);
+      }
+    });
+  }
+
   // Keep reconciliation from racing an open between its tmux and SQLite writes.
   private serial<T>(action: () => Promise<T>): Promise<T> {
     const result = this.pending.then(action);
