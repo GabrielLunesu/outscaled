@@ -1,8 +1,9 @@
-import { cpus, freemem, loadavg, totalmem } from "node:os";
+import { cpus, loadavg } from "node:os";
 import { statfs } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Health } from "@outscaled/protocol";
 import type { RouteContext } from "../context";
+import { memoryUsage } from "../memory";
 import { version } from "../../package.json";
 
 function cpuTimes() {
@@ -46,14 +47,13 @@ export function createHealthRoute({ config, state }: RouteContext) {
   return async (request: Request): Promise<Response | undefined> => {
     if (request.method !== "GET" || new URL(request.url).pathname !== "/v1/health") return;
     sample ??= cpuUsage().finally(() => { sample = undefined; });
-    const [cpu, disk] = await Promise.all([sample, diskUsage(config.workspacesDir)]);
-    const ram = totalmem();
+    const [cpu, disk, ram] = await Promise.all([sample, diskUsage(config.workspacesDir), memoryUsage()]);
     return Response.json(Health.parse({
       name: config.name,
       version,
       uptimeSec: (performance.now() - startedAt) / 1000,
       cpu,
-      ram: { totalBytes: ram, usedBytes: ram - freemem() },
+      ram,
       disk,
       terminals: state.terminalCounts(),
     }));
