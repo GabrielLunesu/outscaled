@@ -84,7 +84,7 @@ Seven entities cover everything; each daemon stores its own in SQLite, and the c
 | Entity | What it is | Key fields |
 | --- | --- | --- |
 | Server | A machine running `wsd` (your Mac or a VPS) | id, name, tailnet address, proce (local / vps), health, desktop (VPS only) |
-| Workspace | A folder on a server that agents work in | id, server, path (`/workspaces/<slug>`), repo URL, default browser profile |
+| Workspace | A folder on a server that agents work in: a fresh clone, or an existing folder registered in place | id, server, path (`/workspaces/<slug>` or the existing folder), repo URL, default browser profile |
 | Agent | A process that lives in a workspace | id, workspace, runtime (claude-code / codex / script), mode (always-on / scheduled / one-off), tmux session, state |
 | Schedule | When a scheduled agent fires | agent, interval or cron, prompt file or command, overlap policy (skip / queue) |
 | Run | One execution of a scheduled or one-off agent | id, agent, started, ended, exit code, log path |
@@ -102,7 +102,7 @@ A **terminal** is one pane in a workspace's grid, backed by a tmux session the d
 **Responsibilities**
 
 1. Report health: version, uptime, CPU, RAM, disk, agent counts.
-2. Create, list and delete workspaces; clone a repo into a new one.
+2. Create, list and delete workspaces; clone a repo into a new one, or register an existing folder in place without copying or moving it.
 3. Own every terminal as a tmux session: start, stop and supervise them, track their status, and expose them to agents over MCP.
 4. Run schedules and record each run with its log.
 5. Receive hook calls from Claude Code, Codex and scripts, and turn them into events.
@@ -130,6 +130,8 @@ A **terminal** is one pane in a workspace's grid, backed by a tmux session the d
 /workspaces/.trash/           # soft-deleted workspaces
 ```
 
+On the Mac, `wsd` runs as you and the root volume is read-only, so the defaults move to your home folder: workspaces in `~/workspaces/`, config in `~/.config/wsd/`, state in `~/.local/share/wsd/state.db`. On any machine, `workspaces_dir` in `config.toml` overrides where new clones go.
+
 Config lives inside the workspace, so it travels with the repo:
 
 ```toml
@@ -155,7 +157,8 @@ HTTP + JSON for commands and one WebSocket for live events and terminal streams,
 | --- | --- | --- |
 | GET | `/health` | Version, uptime, CPU, RAM, disk, agent counts |
 | GET / POST | `/workspaces` | List; create `{slug, repo?}` |
-| DELETE | `/workspaces/:ws` | Move to `.trash`; hard delete only with `?purge=true` |
+| DELETE | `/workspaces/:ws` | Move to `.trash`; hard delete only with `?purge=true`. A folder registered in place is only unregistered, never moved |
+| GET / POST | `/workspaces/:ws/terminals` | List; open `{name, command, alwaysOn?}` as tmux session `ws-<workspace>-<name>` |
 | GET / POST | `/workspaces/:ws/agents` | List; create from a workspace.toml entry or inline |
 | POST | `/agents/:id/start` · `stop` · `restart` | Lifecycle |
 | POST | `/agents/:id/input` | Send text to the agent's tmux pane |
@@ -282,7 +285,7 @@ scripts/serial.sh                    one build or full test suite at a time
 
 **Phase 1 · Daemon core: done when**
 
-- [ ] `ws new <slug> --on <server> [--repo <url>]` creates the folder and clones the repo.
+- [ ] `ws new <slug> --on <server> [--repo <url> | --path <dir>]` creates the folder and clones the repo, or registers an existing folder in place.
 - [ ] `ws term open <workspace> --name a1 --cmd claude` creates tmux session `ws-<workspace>-a1`, and herdr can attach to it.
 - [ ] Killing `wsd` leaves terminals running; restarting it re-adopts them.
 - [ ] An always-on agent killed with `kill -9` restarts within 5 s.
