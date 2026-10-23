@@ -71,7 +71,7 @@ for (const mode of ["source", "compiled"] as const) {
     });
 
     test("health prints human-readable metrics", async () => {
-      const result = await execute([...cli, "--on", "local", "health"], env);
+      const result = await execute([...cli, "health", "--on", "local"], env);
       expect(result.code).toBe(0);
       expect(result.stderr).toBe("");
       for (const label of ["Server:", "Version:", "Uptime:", "CPU:", "RAM:", "Disk:", "Terminals:"]) {
@@ -90,13 +90,28 @@ for (const mode of ["source", "compiled"] as const) {
     }, 10000);
 
     test("remote names and stub commands fail clearly", async () => {
-      const remote = await execute([...cli, "health", "--on", "example"], env);
-      expect(remote.code).toBe(1);
-      expect(remote.stderr).toContain("remote servers aren't supported yet");
+      for (const command of [["health"], ["new", "demo"], ["term", "ls", "demo"]]) {
+        const remote = await execute([...cli, ...command, "--on", "example"], env);
+        expect(remote.code).toBe(1);
+        expect(remote.stderr).toContain("remote servers aren't supported yet");
+      }
       for (const args of [["new", "demo", "--repo", "example-repo"], ["term", "open", "demo", "--name", "a1", "--cmd", "sh"], ["term", "ls", "demo"]]) {
         const result = await execute([...cli, ...args], env);
         expect(result.code).toBe(1);
         expect(result.stderr).toBe("ws: not implemented yet\n");
+      }
+    }, 10000);
+
+    test("dispatch prints usage and command groups reject unrelated options", async () => {
+      for (const args of [[], ["unknown"]]) {
+        const result = await execute([...cli, ...args], env);
+        expect(result.code).toBe(1);
+        expect(result.stderr).toStartWith("usage: ws ");
+      }
+      for (const args of [["health", "--repo", "example"], ["new", "demo", "--cmd", "sh"], ["term", "ls", "demo", "--repo", "example"]]) {
+        const result = await execute([...cli, ...args], env);
+        expect(result.code).toBe(1);
+        expect(result.stderr).toContain("Unknown option");
       }
     }, 10000);
 

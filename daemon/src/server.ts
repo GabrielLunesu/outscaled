@@ -1,25 +1,23 @@
 import type { Config } from "./config";
+import type { RouteContext } from "./context";
 import { apiError } from "./http";
 import { createHealthRoute } from "./routes/health";
-import { terminals } from "./routes/terminals";
-import { workspaces } from "./routes/workspaces";
+import { createTerminalsRoute } from "./routes/terminals";
+import { createWorkspacesRoute } from "./routes/workspaces";
 import { State } from "./state";
 
 export function startServer(config: Config) {
-  const startedAt = performance.now();
   const state = new State(config.statePath);
-  const health = createHealthRoute(config, state, startedAt);
   try {
+    const context: RouteContext = { config, state };
+    const routes = [createHealthRoute(context), createWorkspacesRoute(context), createTerminalsRoute(context)];
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: config.port,
       async fetch(request) {
-        const path = new URL(request.url).pathname;
-        if (path === "/v1/health" && request.method === "GET") return health();
-        if (request.method === "GET" || request.method === "POST") {
-          if (path === "/v1/workspaces") return workspaces(request);
-          const match = /^\/v1\/workspaces\/([^/]+)\/terminals$/.exec(path);
-          if (match) return terminals(request, match[1]!);
+        for (const route of routes) {
+          const response = await route(request);
+          if (response) return response;
         }
         return apiError(404, "not_found", "Route not found");
       },

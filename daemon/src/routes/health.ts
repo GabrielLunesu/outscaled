@@ -2,8 +2,7 @@ import { cpus, freemem, loadavg, totalmem } from "node:os";
 import { statfs } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Health } from "@outscaled/protocol";
-import type { Config } from "../config";
-import type { State } from "../state";
+import type { RouteContext } from "../context";
 import { version } from "../../package.json";
 
 function cpuTimes() {
@@ -40,10 +39,12 @@ export async function diskUsage(workspacesDir: string): Promise<Health["disk"]> 
   }
 }
 
-export function createHealthRoute(config: Config, state: State, startedAt: number) {
+export function createHealthRoute({ config, state }: RouteContext) {
+  const startedAt = performance.now();
   // Concurrent polls share one short, asynchronous CPU sample.
   let sample: Promise<Health["cpu"]> | undefined;
-  return async (): Promise<Response> => {
+  return async (request: Request): Promise<Response | undefined> => {
+    if (request.method !== "GET" || new URL(request.url).pathname !== "/v1/health") return;
     sample ??= cpuUsage().finally(() => { sample = undefined; });
     const [cpu, disk] = await Promise.all([sample, diskUsage(config.workspacesDir)]);
     const ram = totalmem();
