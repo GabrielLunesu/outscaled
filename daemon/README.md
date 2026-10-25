@@ -37,7 +37,54 @@ Run the daemon directly so it does not hold the build lock for its lifetime.
 | `ws term open <workspace> --name <name> [--cmd <command>] [--always-on]` | Start a terminal as tmux session `ws-<workspace>-<name>` in the workspace folder; without `--cmd` it opens your login shell |
 | `ws term ls <workspace>` | List a workspace's terminals and their state |
 
-Every command takes `--json` for raw output, and `--on <server>`, where only `local` works for now.
+Every command takes `--json` for raw output and `--on <server>`. The default is
+`local`, which connects directly to the local daemon.
+
+## Remote commands over SSH
+
+`--on` accepts a host alias from your own `~/.ssh/config`, an SSH hostname, or an
+ordinary `user@host` target. It does not use a server registry. Keep real host
+addresses, usernames, keys and presets outside this public repository.
+
+```sh
+ws health --on example-alias
+ws new demo --on example-alias --repo https://example.invalid/project.git
+ws new existing --on example-alias --path '/absolute/server/folder with spaces'
+ws term open demo --on example-alias --name a1 --cmd claude
+ws term ls demo --on example-alias --json
+```
+
+Install and start `wsd` on the remote machine first, bound to localhost. The CLI
+runs the system `ssh` executable with structured arguments and opens a private
+Unix socket forwarding to `127.0.0.1:7770` on that machine. `WSD_PORT` selects
+the daemon port for both local and remote requests; configure a custom SSH port
+in `~/.ssh/config` instead. Each invocation owns its tunnel and removes the
+socket and SSH processes on completion, error, or SIGINT/SIGTERM/SIGHUP.
+
+SSH uses your existing config, identity files, agent, proxy/jump settings and
+known-host checks. It runs in batch mode, so establish host trust and unlock any
+required keys with SSH beforehand: password, passphrase and first-contact trust
+prompts cannot be answered by `ws`. Connections are independent of SSH's shared
+control sockets and stay in the foreground so the CLI can clean them up.
+
+The CLI waits up to 10 seconds for the tunnel and remote daemon's health endpoint.
+Authentication and forwarding failures include SSH diagnostics. HTTP requests
+time out after 3 seconds, except workspace creation/cloning, which allows 30
+minutes. Interrupting or timing out a request closes the connection; an operation
+already accepted by the remote daemon may still finish there. Check its state
+before retrying.
+
+Remote `--path` **must be an absolute path on the server**. The CLI rejects `~`,
+`~/...` and relative paths, and sends absolute paths unchanged for the server to
+resolve and register in place. Quote paths containing spaces or shell characters.
+Use an explicit server path such as `/absolute/server/folder`; unquoted `~` is
+expanded by your local shell before `ws` can validate it. Local `--path` retains
+relative-path and tilde expansion. Repository URLs and terminal commands are
+also interpreted on the selected server. To attach with tmux or herdr, run them
+on that server.
+
+Remote behavior is covered by isolated fake-SSH tests. The Phase 1 checklist
+remains pending verification against a real VPS.
 
 Terminals run on tmux's default socket, so `tmux attach -t ws-<workspace>-<name>` or herdr can attach to them. They keep running when wsd stops, and wsd re-adopts them when it starts. When an `--always-on` terminal's process dies, wsd restarts the same command in the same pane after 1 s, 5 s, 30 s, then every 5 min; after five quick failures in a row it marks the terminal `crashed` and stops.
 

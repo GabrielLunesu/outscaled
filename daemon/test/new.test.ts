@@ -67,8 +67,7 @@ test("CLI errors print one line, no stdout, and exit 1", async () => {
   expect((await cli(["taken"])).code).toBe(0);
   for (const args of [[], ["one", "two"], ["Upper"], ["../escape"], ["bad", "--path", ""],
     ["both", "--repo", "repo", "--path", f.root], ["missing", "--path", "missing"],
-    ["taken"], ["failed", "--repo", "file:///nonexistent-workspace-test-repository"],
-    ["remote", "--on", "example"]]) {
+    ["taken"], ["failed", "--repo", "file:///nonexistent-workspace-test-repository"]]) {
     const result = await cli(args);
     expect(result.code).toBe(1);
     expect(result.stdout).toBe("");

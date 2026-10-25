@@ -10,7 +10,7 @@ export async function runCli(args = process.argv.slice(2)): Promise<number> {
       case "new": await newWorkspace(options); break;
       case "term": await term(options); break;
       default:
-        console.error("usage: ws <health | new | term open | term ls> [--on local] [--json]");
+        console.error("usage: ws <health | new | term open | term ls> [--on <server>] [--json]");
         return 1;
     }
     return 0;
