@@ -40,8 +40,10 @@ test("client reports invalid JSON and non-ApiError failures clearly", async () =
   await expect(client.request("GET", "/v1/unexpected")).rejects.toThrow("wsd returned HTTP 502");
 });
 
-test("client rejects remote names and reports an unreachable local address", async () => {
-  expect(() => createClient("example")).toThrow("remote servers aren't supported yet");
+test("client rejects invalid SSH destinations and reports an unreachable local address", async () => {
+  for (const target of ["", "-oProxyCommand=anything", "host command", "ssh://example", "host\noption"]) {
+    expect(() => createClient(target)).toThrow("--on must be local");
+  }
   const address = `http://127.0.0.1:${server.port}`;
   await server.stop(true);
   await expect(client.request("GET", "/v1/health")).rejects.toThrow(`wsd isn't reachable at ${address}`);

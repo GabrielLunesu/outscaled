@@ -269,6 +269,7 @@ Everything an agent needs to start: the decisions, the repo layout, and a done-w
 | Daemon | Bun + TypeScript, compiled to one binary |
 | Client | Fork of microsoft/vscode at the repo root; features in a built-in extension, core changes only for workspace switching and live tab status |
 | Remote access | SSH tunnels opened by the client |
+| CLI server target | `--on local` or an SSH host/alias from `~/.ssh/config`; server details stay outside the repo |
 
 **Repo layout (the VS Code fork is the root)**
 
@@ -285,7 +286,7 @@ scripts/serial.sh                    one build or full test suite at a time
 
 **Phase 1 · Daemon core: done when**
 
-- [ ] `ws new <slug> --on <server> [--repo <url> | --path <dir>]` creates the folder and clones the repo, or registers an existing folder in place.
+- [x] `ws new <slug> --on <server> [--repo <url> | --path <dir>]` creates the folder and clones the repo, or registers an existing folder in place.
 - [x] `ws term open <workspace> --name a1 --cmd claude` creates tmux session `ws-<workspace>-a1`, and herdr can attach to it.
 - [x] Killing `wsd` leaves terminals running; restarting it re-adopts them.
 - [x] An always-on agent killed with `kill -9` restarts within 5 s.

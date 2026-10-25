@@ -2,9 +2,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, readdirSync, readlinkSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
-import { Health, Workspace } from "@outscaled/protocol";
+import { Health, Terminal, Workspace } from "@outscaled/protocol";
 import { fixture } from "./helpers";
 import { localRepository } from "./workspace-helpers";
+import { fakeSsh } from "./ssh-helpers";
 
 const root = join(import.meta.dir, "..");
 
@@ -42,9 +43,11 @@ for (const mode of ["source", "compiled"] as const) {
     let env: NodeJS.ProcessEnv;
     let cli: string[];
     let address: string;
+    let ssh: ReturnType<typeof fakeSsh>;
 
     beforeAll(async () => {
       f = fixture();
+      ssh = fakeSsh(f.root);
       env = { ...f.env, WSD_PORT: String(await freePort()) };
       address = `http://127.0.0.1:${env.WSD_PORT}`;
       cli = mode === "source" ? [process.execPath, "src/ws.ts"] : [join(root, "dist/ws")];
@@ -68,6 +71,8 @@ for (const mode of ["source", "compiled"] as const) {
         await daemon.exited;
         clearTimeout(timer);
       }
+      if (f) Bun.spawnSync(["tmux", "-S", f.env.WSD_TMUX_SOCKET, "kill-server"], { env: f.env });
+      for (const invocation of ssh?.invocations() ?? []) ssh.assertClean(invocation);
       f?.cleanup();
     });
 
@@ -90,11 +95,11 @@ for (const mode of ["source", "compiled"] as const) {
       expect(Health.parse(JSON.parse(curl.stdout)).version).toBe("0.0.0");
     }, 10000);
 
-    test("remote names fail clearly", async () => {
+    test("invalid SSH destinations fail clearly before connecting", async () => {
       for (const command of [["health"], ["new", "demo"], ["term", "ls", "demo"]]) {
-        const remote = await execute([...cli, ...command, "--on", "example"], env);
+        const remote = await execute([...cli, ...command, "--on=-invalid"], { ...env, ...ssh.env });
         expect(remote.code).toBe(1);
-        expect(remote.stderr).toContain("remote servers aren't supported yet");
+        expect(remote.stderr).toContain("--on must be local");
       }
     }, 10000);
 
@@ -125,6 +130,65 @@ for (const mode of ["source", "compiled"] as const) {
       expect(listed).toHaveLength(2);
       expect(listed[0]).toMatchObject({ slug: "demo", path: demoPath, repo, inPlace: false });
       expect(listed[1]).toEqual(workspace);
+    }, 10000);
+
+    test("SSH CLI creates empty workspaces, clones and registers folders, checks health and opens/lists terminals", async () => {
+      const remoteEnv = { ...env, ...ssh.env };
+      const remote = (...args: string[]) => execute([...cli, ...args, "--on", "example-alias", "--json"], remoteEnv);
+      const empty = await remote("new", "remote-empty");
+      expect(empty.code).toBe(0);
+      expect(Workspace.parse(JSON.parse(empty.stdout))).toMatchObject({ slug: "remote-empty", inPlace: false });
+
+      const repoRoot = join(f.root, "remote-repo-fixture");
+      mkdirSync(repoRoot);
+      const repo = localRepository(repoRoot);
+      const cloned = await remote("new", "remote-clone", "--repo", repo);
+      expect(cloned.code).toBe(0);
+      expect(cloned.stderr).toBe("");
+      const clone = Workspace.parse(JSON.parse(cloned.stdout));
+      expect(clone).toMatchObject({ slug: "remote-clone", repo, inPlace: false });
+      expect(readFileSync(join(clone.path, "README.md"), "utf8")).toBe("workspace fixture\n");
+      expect(statSync(join(clone.path, ".git")).isDirectory()).toBe(true);
+
+      const path = join(f.root, "remote existing 'folder'; $literal");
+      mkdirSync(path);
+      writeFileSync(join(path, "keep"), "unchanged");
+      const before = statSync(path);
+      const registered = await remote("new", "remote-existing", "--path", path);
+      expect(registered.code).toBe(0);
+      expect(Workspace.parse(JSON.parse(registered.stdout))).toMatchObject({ slug: "remote-existing", path, inPlace: true });
+      expect(readdirSync(path)).toEqual(["keep"]);
+      expect(statSync(path).mtimeMs).toBe(before.mtimeMs);
+
+      const health = await remote("health");
+      expect(health.code).toBe(0);
+      expect(Health.parse(JSON.parse(health.stdout)).version).toBe("0.0.0");
+      const opened = await remote("term", "open", "remote-existing", "--name", "a1", "--cmd", "sleep 600");
+      expect(opened.code).toBe(0);
+      expect(Terminal.parse(JSON.parse(opened.stdout))).toMatchObject({ workspace: "remote-existing", name: "a1", command: "sleep 600" });
+      const listed = await remote("term", "ls", "remote-existing");
+      expect(listed.code).toBe(0);
+      expect(Terminal.array().parse(JSON.parse(listed.stdout))).toHaveLength(1);
+      expect(ssh.invocations()).toHaveLength(6);
+      for (const invocation of ssh.invocations()) ssh.assertClean(invocation);
+    }, 15000);
+
+    test("invalid CLI arguments and non-absolute remote paths never invoke SSH", async () => {
+      const before = ssh.invocations().length;
+      for (const args of [
+        ["new"], ["new", "Upper"], ["new", "one", "two"], ["new", "demo", "--repo", ""],
+        ["new", "demo", "--repo", "repo", "--path", "/example"],
+        ...["", "~", "~/folder", "relative", "./folder"].map(path => ["new", "demo", "--path", path]),
+        ["term", "open", "demo"], ["term", "open", "demo", "--name", "Upper"],
+        ["term", "ls", "demo", "--cmd", "sh"], ["term", "ls", "../escape"],
+        ["health", "extra"], ["health", "--unknown"],
+      ]) {
+        const result = await execute([...cli, ...args, "--on", "example-alias"], { ...env, ...ssh.env });
+        expect(result.code).toBe(1);
+        expect(result.stdout).toBe("");
+        expect(result.stderr.trim().split("\n")).toHaveLength(1);
+      }
+      expect(ssh.invocations()).toHaveLength(before);
     }, 10000);
 
     test("dispatch prints usage and command groups reject unrelated options", async () => {
