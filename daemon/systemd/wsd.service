@@ -1,0 +1,20 @@
+[Unit]
+Description=Outscaled workspace daemon
+After=network.target
+
+[Service]
+Type=simple
+User=ws
+Group=ws
+WorkingDirectory=/home/ws
+Environment=HOME=/home/ws
+Environment=WSD_CONFIG_DIR=/etc/wsd
+Environment=WSD_STATE_DIR=/var/lib/wsd
+ExecStart=/usr/local/bin/wsd
+# tmux and its panes must outlive daemon stops, crashes and restarts.
+KillMode=process
+Restart=on-failure
+RestartSec=1s
+
+[Install]
+WantedBy=multi-user.target
