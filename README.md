@@ -15,11 +15,11 @@ Phase 1 provides the daemon core for macOS and Linux, built from source. `wsd` l
 - `ws health` reports CPU, RAM, disk and terminal counts.
 - `--on <server>` selects a remote daemon over SSH using a host or alias from `~/.ssh/config`; `--on local` selects this machine.
 
-[Linux VPS setup](daemon/systemd/README.md) covers cross-compilation, deployment and systemd operation. Mac/VPS health checks and the Phase 1 daily-use gate still require orchestrator verification.
+[Linux VPS setup](daemon/systemd/README.md) covers cross-compilation, deployment and systemd operation. Health reporting has been verified on macOS and Linux; Phase 1 awaits review in daily use before Phase 2 starts.
 
 ## What's next
 
-Next is **Phase 2: status and agent terminals**, after Phase 1 verification: live idle, working and needs-you status from Claude Code and Codex hooks, plus MCP tools so agents can open and drive terminals. Phase 3 adds the client sidebar and terminal grids; Phase 4 adds the VPS desktop and browser.
+Next is **Phase 2: status and agent terminals**, after Phase 1 review: live idle, working and needs-you status from Claude Code and Codex hooks, plus MCP tools so agents can open and drive terminals. Phase 3 adds the client sidebar and terminal grids; Phase 4 adds the VPS desktop and browser.
 
 The full plan, with a checklist per phase, is in [docs/spec.md](docs/spec.md).
 

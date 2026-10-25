@@ -1,8 +1,8 @@
 # Linux VPS operation
 
 Phase 1 uses a personal source build, with one compiled binary serving as both
-`wsd` and `ws`. These instructions prepare deployment; they do not establish that
-the Mac/VPS health gate or daily-use gate has passed. See [the spec](../../docs/spec.md).
+`wsd` and `ws`. Health reporting has been verified on macOS and Ubuntu Linux.
+The daily-use gate remains part of Phase 1 review. See [the spec](../../docs/spec.md).
 
 ## Prerequisites and source build
 
@@ -132,9 +132,8 @@ user. If your SSH login is an administrator instead, attach on the VPS with
 The Phase 1 done-when check is: `GET /health` returns CPU, RAM, disk and terminal
 count on both the Mac and the VPS. The actual versioned URL is `/v1/health`.
 Check both responses for `cpu` (cores, load and usage), `ram` and `disk` (total
-and used bytes), and `terminals` (total and running). These are verification
-instructions, not recorded passing results; deployment and real-host verification
-are performed separately by the orchestrator.
+and used bytes), and `terminals` (total and running). The orchestrator verified
+these fields on macOS and Ubuntu Linux, including the live terminal count.
 
 ## Restart and update behavior
 
@@ -150,8 +149,9 @@ curl --fail --show-error --max-time 5 http://127.0.0.1:7770/v1/health
 ```
 
 With the earlier demo terminal running, compare its pane PID before and after the
-restart and confirm `ws term ls demo` lists it again. This is a persistence check
-to perform on the deployed host, not a recorded result.
+restart and confirm `ws term ls demo` lists it again. The orchestrator verified
+the same pane PID after service stop/start and daemon SIGKILL, and an always-on
+process restarted within five seconds after SIGKILL.
 
 `Restart=on-failure` restarts a crashed daemon after one second. `KillMode=process`
 is intentional: systemd stops only the main `wsd` process, leaving the tmux server,

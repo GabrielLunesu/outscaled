@@ -289,7 +289,7 @@ scripts/serial.sh                    one build or full test suite at a time
 - [x] `ws term open <workspace> --name a1 --cmd claude` creates tmux session `ws-<workspace>-a1`, and herdr can attach to it.
 - [x] Killing `wsd` leaves terminals running; restarting it re-adopts them.
 - [x] An always-on agent killed with `kill -9` restarts within 5 s.
-- [ ] `GET /health` returns CPU, RAM, disk and terminal count on both the Mac and the VPS.
+- [x] `GET /health` returns CPU, RAM, disk and terminal count on both the Mac and the VPS.
 
 **Phase 2 · Status and agent terminals: done when**
 
