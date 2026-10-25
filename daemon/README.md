@@ -11,10 +11,11 @@ cd ../daemon
 ../scripts/serial.sh bun test
 bunx tsc --noEmit
 ../scripts/serial.sh bun run build
-./dist/wsd
 ```
 
-In another terminal, from `daemon/`:
+Start the daemon with the bounded `scripts/serial.sh` startup wrapper in the
+[root README](../README.md#run-from-source), which releases the lock once the
+daemon is ready. Then, from `daemon/`:
 
 ```sh
 ./dist/ws health
@@ -23,8 +24,8 @@ In another terminal, from `daemon/`:
 
 The build produces one executable, `dist/wsd`, and a relative `dist/ws` symlink.
 Keep the symlink when copying them elsewhere: the invoked name selects the CLI.
-For development use `bun src/wsd.ts` and `bun src/ws.ts health`.
-Run the daemon directly so it does not hold the build lock for its lifetime.
+For development, substitute `bun ./daemon/src/wsd.ts` for the daemon executable
+in that startup wrapper and use `bun src/ws.ts health` from `daemon/`.
 
 ## Commands
 
@@ -83,8 +84,8 @@ relative-path and tilde expansion. Repository URLs and terminal commands are
 also interpreted on the selected server. To attach with tmux or herdr, run them
 on that server.
 
-Remote behavior is covered by isolated fake-SSH tests. The Phase 1 checklist
-remains pending verification against a real VPS.
+Remote behavior is covered by isolated fake-SSH tests and has been verified on
+a real Linux VPS, including cloning, in-place registration and terminal access.
 
 Terminals run on tmux's default socket, so `tmux attach -t ws-<workspace>-<name>` or herdr can attach to them. They keep running when wsd stops, and wsd re-adopts them when it starts. When an `--always-on` terminal's process dies, wsd restarts the same command in the same pane after 1 s, 5 s, 30 s, then every 5 min; after five quick failures in a row it marks the terminal `crashed` and stops.
 
