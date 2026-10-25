@@ -25,7 +25,7 @@ export async function term(args: string[]): Promise<void> {
     if (body.data.command?.includes("\0")) throw new Error("--cmd must not contain NUL bytes");
     const client = createClient(values.on);
     const terminal = Terminal.parse(await client.request("POST", path, body.data));
-    const attach = values.on === "local" ? "Attach" : "Attach on remote server";
+    const attach = values.on === "local" ? "Attach" : `Attach on remote server ${values.on} as the daemon user`;
     console.log(values.json ? JSON.stringify(terminal) : `${terminal.session}\n${attach}: tmux attach -t ${terminal.session}`);
     return;
   }
