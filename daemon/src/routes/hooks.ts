@@ -1,4 +1,4 @@
-import { ClaudeCodeHookRequest, type ClaudeCodeHookPayload, type TerminalStatus } from "@outscaled/protocol";
+import { ClaudeCodeHookRequest, CodexHookRequest, type ClaudeCodeHookPayload, type TerminalStatus } from "@outscaled/protocol";
 import type { RouteContext } from "../context";
 import { apiError, validateBody } from "../http";
 
@@ -20,15 +20,23 @@ export function createHooksRoute({ state, terminals }: RouteContext) {
     if (!peerAddress || !/^(127\.\d+\.\d+\.\d+|::1|::ffff:127\.\d+\.\d+\.\d+)$/.test(peerAddress)) {
       return apiError(403, "forbidden", "Hooks are accepted only from loopback");
     }
-    if (match[1] !== "claude-code") return apiError(400, "invalid_runtime", "Unsupported hook runtime");
-    const body = await validateBody(request, ClaudeCodeHookRequest);
+    const runtime = match[1];
+    if (runtime !== "claude-code" && runtime !== "codex") return apiError(400, "invalid_runtime", "Unsupported hook runtime");
+    const body = runtime === "codex"
+      ? await validateBody(request, CodexHookRequest)
+      : await validateBody(request, ClaudeCodeHookRequest);
     if (body instanceof Response) return body;
     return terminals.serial(async () => {
       const terminal = state.getTerminal(body.terminal);
       if (!terminal) return apiError(404, "not_found", "Terminal not found");
-      if (terminal.runtime !== "claude-code") return apiError(409, "runtime_mismatch", "Terminal runtime does not match hook runtime");
-      const status = claudeStatus(body.payload);
-      if (status) state.updateTerminalStatus(terminal.id, status);
+      if (terminal.runtime !== runtime) return apiError(409, "runtime_mismatch", "Terminal runtime does not match hook runtime");
+      if (terminal.state !== "running") return new Response(null, { status: 204 });
+      if (runtime === "codex") {
+        if (body.payload.type === "agent-turn-complete") terminals.codexTurnComplete(terminal.id);
+      } else {
+        const status = claudeStatus(ClaudeCodeHookRequest.parse(body).payload);
+        if (status) state.updateTerminalStatus(terminal.id, status);
+      }
       return new Response(null, { status: 204 });
     });
   };

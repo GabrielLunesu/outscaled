@@ -39,14 +39,17 @@ export function terminalRuntime(command: string): TerminalRuntime | null {
   return name === "claude" ? "claude-code" : name === "codex" ? "codex" : null;
 }
 
-export function writeClaudeSettings(stateDir: string): string {
-  mkdirSync(stateDir, { recursive: true });
+export function wsCliArgv(): string[] {
   // A copied compiled binary need not have a sibling ws symlink. The explicit
   // dispatch flag works regardless of the executable's installed name.
-  const cli = import.meta.path.startsWith("/$bunfs/")
+  return import.meta.path.startsWith("/$bunfs/")
     ? [process.execPath, "--ws-cli"]
     : [process.execPath, join(import.meta.dir, "ws.ts")];
-  const command = [...cli, "hook", "claude-code"].map(shellQuote).join(" ");
+}
+
+export function writeClaudeSettings(stateDir: string): string {
+  mkdirSync(stateDir, { recursive: true });
+  const command = [...wsCliArgv(), "hook", "claude-code"].map(shellQuote).join(" ");
   const hooks = Object.fromEntries([
     "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Stop", "Notification",
   ].map(event => [event, [{
@@ -60,12 +63,26 @@ export function writeClaudeSettings(stateDir: string): string {
 
 export class Terminals {
   private pending: Promise<unknown> = Promise.resolve();
+  private readonly codexNotifyTimes = new Map<string, number>();
 
   constructor(
     private readonly state: State,
     private readonly tmux: Tmux,
     private readonly launch?: { claudeSettings: string; port: number },
   ) {}
+
+  codexTurnComplete(id: string): void {
+    // Remember even duplicate idle notifications: updateTerminalStatus preserves
+    // the timestamp when the status is unchanged. Called under the lifecycle lock.
+    this.codexNotifyTimes.set(id, Date.now());
+    this.state.updateTerminalStatus(id, "idle");
+  }
+
+  codexInNotifyGrace(terminal: Terminal, now: number): boolean {
+    const notifiedAt = this.codexNotifyTimes.get(terminal.id);
+    if (notifiedAt !== undefined && now - notifiedAt >= 1000) this.codexNotifyTimes.delete(terminal.id);
+    return notifiedAt !== undefined && now - notifiedAt < 1000;
+  }
 
   reconcile(): Promise<void> {
     return this.serial(async () => {
@@ -75,7 +92,14 @@ export class Terminals {
       }
       this.state.db.transaction(() => {
         for (const terminal of this.state.listTerminals()) {
+          // Older databases may have detected runtimes without a status yet.
+          if (terminal.runtime && terminal.status === null) this.state.updateTerminalStatus(terminal.id, "starting");
           const pane = sessions.get(terminal.session);
+          if (terminal.runtime && pane && !pane.dead && terminal.pid !== pane.pid) {
+            this.state.updateTerminalStatus(terminal.id, "starting");
+          } else if (terminal.runtime === "codex" && terminal.status === "idle" && terminal.statusChangedAt) {
+            this.codexNotifyTimes.set(terminal.id, Date.parse(terminal.statusChangedAt));
+          }
           // A dead, exhausted always-on pane must stay crashed across restarts.
           if (terminal.alwaysOn && terminal.state === "crashed" && (!pane || pane.dead)) {
             sessions.delete(terminal.session);
@@ -117,6 +141,12 @@ export class Terminals {
         if (!this.launch) throw new Error("Claude hook settings are not configured");
         const { end } = firstWord(command);
         launchCommand = `${command.slice(0, end)} --settings ${shellQuote(this.launch.claudeSettings)}${command.slice(end)}`;
+      } else if (runtime === "codex") {
+        const { end } = firstWord(command);
+        // JSON string arrays are also TOML arrays of basic strings. Quote the
+        // whole override once more for the login shell, preserving user args.
+        const notify = `notify=${JSON.stringify([...wsCliArgv(), "hook", "codex"])}`;
+        launchCommand = `${command.slice(0, end)} -c ${shellQuote(notify)}${command.slice(end)}`;
       }
       let pid: number;
       try {
