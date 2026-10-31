@@ -27,7 +27,7 @@ function noServer(error: unknown): boolean {
 export class Tmux {
   constructor(private readonly socket = process.env.WSD_TMUX_SOCKET) {}
 
-  private async run(args: string[]): Promise<string> {
+  private async run(args: string[], input?: string, trim = true): Promise<string> {
     const env = { ...process.env };
     // A daemon started inside tmux must still use the configured/default socket.
     delete env.TMUX;
@@ -36,13 +36,38 @@ export class Tmux {
       // The first client starts the server. Isolate it from wsd's process group
       // so a Ctrl-C sent to the daemon's whole group cannot kill its terminals.
       detached: true,
-      env, stdin: "ignore", stdout: "pipe", stderr: "pipe",
+      env, stdin: input === undefined ? "ignore" : new Blob([input]), stdout: "pipe", stderr: "pipe",
     });
     const [code, stdout, stderr] = await Promise.all([
       child.exited, new Response(child.stdout).text(), new Response(child.stderr).text(),
     ]);
     if (code !== 0) throw new TmuxError(stderr);
-    return stdout.trim();
+    return trim ? stdout.trim() : stdout;
+  }
+
+  async pasteText(pane: string, text: string): Promise<void> {
+    // A private buffer prevents simultaneous requests from sharing pasted text.
+    // stdin keeps quotes, newlines and shell metacharacters entirely as data.
+    const buffer = `wsd-${crypto.randomUUID()}`;
+    if (!text.length) return;
+    await this.run(["load-buffer", "-b", buffer, "-"], text);
+    try {
+      await this.run(["paste-buffer", "-p", "-r", "-d", "-b", buffer, "-t", pane]);
+    } finally {
+      await this.run(["delete-buffer", "-b", buffer]).catch(() => {});
+    }
+  }
+
+  async sendKeys(pane: string, keys: string[]): Promise<void> {
+    if (keys.length) await this.run(["send-keys", "-t", pane, ...keys]);
+  }
+
+  async captureOutput(pane: string, lines: number): Promise<string> {
+    const output = await this.run(["capture-pane", "-p", "-J", "-t", pane, "-S", "-"], undefined, false);
+    // Keep leading whitespace and whitespace on nonblank lines intact.
+    const rows = output.split("\n");
+    while (rows.length && /^[\t ]*$/.test(rows.at(-1)!)) rows.pop();
+    return rows.slice(-lines).join("\n");
   }
 
   async createSession(name: string, folder: string, shell: string, command?: string, alwaysOn = false, env: Record<string, string> = {}): Promise<number> {

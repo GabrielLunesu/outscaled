@@ -19,8 +19,10 @@ export async function runCli(args = process.argv.slice(2)): Promise<number> {
       case "term": await term(options); break;
       case "status": return await status(options);
       case "run": await run(options); break;
+      // Keep SDK startup out of the short-lived, best-effort hook command.
+      case "mcp": await (await import("./cli/mcp")).mcp(options); break;
       default:
-        console.error("usage: ws <health | new | term open | term ls | status | run ls | run log | hook> [options]; ws status [--json] covers every server (no --on)");
+        console.error("usage: ws <health | new | term open | term ls | status | run ls | run log | hook | mcp> [options]; ws status [--json] covers every server (no --on)");
         return 1;
     }
     return 0;
