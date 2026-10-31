@@ -1,0 +1,18 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Gabriel Lunesu. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+/* Upstream tab styles cover only the eight standard ANSI colors, excluding bright black (grey). */
+.monaco-workbench .terminal-icon-terminal_ansiBrightBlack .codicon:first-child:not(.codicon-split-horizontal):not(.codicon-trashcan):not(.file-icon),
+.monaco-workbench .show-file-icons .terminal-tab.terminal-icon-terminal_ansiBrightBlack::before {
+	color: var(--vscode-terminal-ansiBrightBlack) !important;
+}
+
+/* Editor labels retain the modifier in the class name instead of expanding it like panel tabs. */
+.monaco-workbench .terminal-tab[class~="codicon-loading~spin"]::before {
+	content: var(--vscode-icon-loading-content) !important;
+	font-family: var(--vscode-icon-loading-font-family) !important;
+	animation: codicon-spin 1.5s steps(30) infinite;
+	transform-origin: center center;
+}

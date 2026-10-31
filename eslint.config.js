@@ -152,7 +152,7 @@ export default defineConfig(
 		},
 	},
 	{
-		files: ['extensions/outscaled/**'],
+		files: ['extensions/outscaled/**', 'src/vs/workbench/contrib/outscaled/**'],
 		rules: {
 			'header/header': [2, 'block', [
 				'---------------------------------------------------------------------------------------------',

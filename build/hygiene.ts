@@ -161,7 +161,8 @@ export function hygiene(some: NodeJS.ReadWriteStream | string[] | undefined, run
 
 	const copyrights = es.through(function (file: VinylFileWithLines) {
 		const lines = file.__lines;
-		const expectedHeader = file.relative.replace(/\\/g, '/').startsWith('extensions/outscaled/')
+		const relativePath = file.relative.replace(/\\/g, '/');
+		const expectedHeader = relativePath.startsWith('extensions/outscaled/') || relativePath.startsWith('src/vs/workbench/contrib/outscaled/')
 			? copyrightHeaderLines.map(line => line.replace('Microsoft Corporation', 'Gabriel Lunesu'))
 			: copyrightHeaderLines;
 

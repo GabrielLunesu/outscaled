@@ -334,6 +334,7 @@ import './contrib/output/browser/outputView.js';
 
 // Terminal
 import './contrib/terminal/terminal.all.js';
+import './contrib/outscaled/browser/outscaled.contribution.js';
 
 // External terminal
 import './contrib/externalTerminal/browser/externalTerminal.contribution.js';
