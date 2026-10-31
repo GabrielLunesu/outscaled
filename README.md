@@ -6,20 +6,29 @@ It's a personal build, published as source: no installers, no releases.
 
 ## What works today
 
-Phase 1 provides the daemon core for macOS and Linux, built from source. `wsd` listens on loopback and `ws` is its CLI:
+The daemon (phases 1 and 2) runs on macOS and Linux, built from source. `wsd` listens on loopback and `ws` is its CLI.
 
-- `ws new <slug> --repo <url>` clones a repo into a new workspace; `ws new <slug> --path <dir>` registers a folder you already have, in place, without copying it.
+**Workspaces and terminals**
+
+- `ws new <slug> --repo <url>` clones a repo into a new workspace; `ws new <slug> --path <dir>` registers a folder you already have, in place, without copying it. wsd never writes into a workspace.
 - `ws term open <workspace> --name <name> --cmd <command>` starts the command in tmux session `ws-<workspace>-<name>`, which you can attach to with `tmux attach` or from herdr.
 - Terminals outlive `wsd`: stop or kill it, start it again, and it picks them back up.
 - `--always-on` terminals come back by themselves about a second after their process dies, backing off if it keeps crashing.
 - `ws health` reports CPU, RAM, disk and terminal counts.
 - `--on <server>` selects a remote daemon over SSH using a host or alias from `~/.ssh/config`; `--on local` selects this machine.
 
-[Linux VPS setup](daemon/systemd/README.md) covers cross-compilation, deployment and systemd operation. Health reporting has been verified on macOS and Linux; Phase 1 awaits review in daily use before Phase 2 starts.
+**Agent status and tools**
+
+- Terminals running `claude` or `codex` report live status: `working`, `needs_input` (Claude's permission prompts) and `idle`. Hooks are passed when the agent starts, so neither your repos nor your agent settings are edited.
+- `ws status` lists every terminal on every server: this machine plus the SSH hosts in `~/.config/outscaled/servers.toml`.
+- `ws mcp` gives agents MCP tools to open terminals, send them prompts, wait for them to go idle and read their output, so one Claude Code session can run several Codex agents.
+- Scheduled agents in a workspace's `.ws/workspace.toml` (for example `every = "10m"`) run a headless prompt on time; `ws run ls` and `ws run log` show each run and its log.
+
+[Linux VPS setup](daemon/systemd/README.md) covers cross-compilation, deployment and systemd operation. All commands are in [daemon/README.md](daemon/README.md).
 
 ## What's next
 
-Next is **Phase 2: status and agent terminals**, after Phase 1 review: live idle, working and needs-you status from Claude Code and Codex hooks, plus MCP tools so agents can open and drive terminals. Phase 3 adds the client sidebar and terminal grids; Phase 4 adds the VPS desktop and browser.
+Next is **Phase 3: the client fork**, after Phase 2 is reviewed in daily use: the workspace sidebar with live status dots, switching between Mac and VPS workspaces without reloading, terminal grids from launch presets, and live tab colours and notifications. Phase 4 adds the VPS desktop and browser.
 
 The full plan, with a checklist per phase, is in [docs/spec.md](docs/spec.md).
 
@@ -74,6 +83,8 @@ scripts/serial.sh sh -eu -c '
 ./daemon/dist/ws new demo --repo https://github.com/octocat/Hello-World.git
 ./daemon/dist/ws term open demo --name a1 --cmd claude --always-on
 tmux attach -t ws-demo-a1
+./daemon/dist/ws term ls demo         # process state and live agent status
+./daemon/dist/ws status               # every terminal on every server
 # With a deployed VPS and a placeholder SSH alias configured locally:
 ./daemon/dist/ws health --on vps --json
 ```
