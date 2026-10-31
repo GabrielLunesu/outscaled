@@ -51,8 +51,8 @@ console.log(${JSON.stringify(output)});
       { outputGeneration: 8, windowActivity: 12 },
     ]);
     const args = JSON.parse(readFileSync(argsPath, "utf8"));
-    expect(args.slice(0, 5)).toEqual(["-S", f.env.WSD_TMUX_SOCKET, "list-panes", "-a", "-F"]);
-    expect(args[5]).toContain("#{pane_output_generation}\t#{window_activity}");
+    expect(args.slice(0, 6)).toEqual(["-u", "-S", f.env.WSD_TMUX_SOCKET, "list-panes", "-a", "-F"]);
+    expect(args[6]).toContain("#{pane_output_generation}\t#{window_activity}");
   } finally {
     if (oldPath === undefined) delete process.env.PATH;
     else process.env.PATH = oldPath;
