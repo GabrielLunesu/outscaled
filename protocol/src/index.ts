@@ -39,6 +39,10 @@ export type CreateWorkspaceRequest = z.infer<typeof CreateWorkspaceRequest>;
 
 export const TerminalState = z.enum(["running", "restarting", "exited", "crashed"]);
 export type TerminalState = z.infer<typeof TerminalState>;
+export const TerminalRuntime = z.enum(["claude-code", "codex"]);
+export type TerminalRuntime = z.infer<typeof TerminalRuntime>;
+export const TerminalStatus = z.enum(["starting", "working", "needs_input", "idle"]);
+export type TerminalStatus = z.infer<typeof TerminalStatus>;
 export const Terminal = z.object({
   id: z.string().min(1),
   workspace: Slug,
@@ -47,12 +51,19 @@ export const Terminal = z.object({
   session: z.string(),
   alwaysOn: z.boolean(),
   state: TerminalState,
+  runtime: TerminalRuntime.nullable(),
+  status: TerminalStatus.nullable(),
+  statusChangedAt: timestamp.nullable(),
   restarts: count,
   pid: z.number().int().positive().nullable(),
   createdAt: timestamp,
 }).refine(value => value.session === `ws-${value.workspace}-${value.name}`, {
   path: ["session"],
   message: "session must be ws-<workspace>-<name>",
+}).refine(value => (value.runtime !== null || value.status === null) &&
+  (value.status === null) === (value.statusChangedAt === null), {
+  path: ["status"],
+  message: "agent status requires a runtime and a status change time",
 });
 export type Terminal = z.infer<typeof Terminal>;
 
@@ -63,6 +74,17 @@ export const OpenTerminalRequest = z.object({
   alwaysOn: z.boolean().optional(),
 });
 export type OpenTerminalRequest = z.infer<typeof OpenTerminalRequest>;
+
+// Preserve Claude's raw JSON, including fields added by newer versions.
+export const ClaudeCodeHookPayload = z.looseObject({
+  hook_event_name: z.string().min(1),
+  notification_type: z.string().optional(),
+});
+export type ClaudeCodeHookPayload = z.infer<typeof ClaudeCodeHookPayload>;
+export const ClaudeCodeHookRequest = z.object({
+  terminal: z.string().min(1),
+  payload: ClaudeCodeHookPayload,
+});
 
 export const ApiError = z.object({
   error: z.object({ code: z.string(), message: z.string() }),

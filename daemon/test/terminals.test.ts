@@ -168,7 +168,7 @@ test("CLI opens and lists terminals against the running daemon", async () => {
     .toEqual({ code: 0, stdout: "ws-demo-a1\nAttach: tmux attach -t ws-demo-a1\n", stderr: "" });
   expect(await tmux.hasSession("ws-demo-a1")).toBe(true);
   expect(await cli("ls", "demo", "--on", "local"))
-    .toEqual({ code: 0, stdout: "a1\trunning\tws-demo-a1\tsleep 600\n", stderr: "" });
+    .toEqual({ code: 0, stdout: "a1\trunning\t-\tws-demo-a1\tsleep 600\n", stderr: "" });
   const listed = await cli("ls", "demo", "--json");
   expect(listed.code).toBe(0);
   expect(Terminal.array().parse(JSON.parse(listed.stdout))[0]).toMatchObject({ name: "a1", alwaysOn: true });

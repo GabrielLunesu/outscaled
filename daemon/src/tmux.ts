@@ -42,12 +42,13 @@ export class Tmux {
     return stdout.trim();
   }
 
-  async createSession(name: string, folder: string, shell: string, command?: string, alwaysOn = false): Promise<number> {
+  async createSession(name: string, folder: string, shell: string, command?: string, alwaysOn = false, env: Record<string, string> = {}): Promise<number> {
     // Multiple command arguments make tmux exec the shell directly, without an
     // extra shell interpreting the user's command or paths a second time.
     const args = [shell, "-l", ...(command === undefined ? [] : ["-c", `exec ${command}`])];
     const pid = await this.run([
       "new-session", "-d", "-s", name, "-c", folder, "-P", "-F", "#{pane_pid}",
+      ...Object.entries(env).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
       // Hold the pane open until its local option is set, even for commands
       // that exit immediately. Never change tmux's global defaults.
       ...(alwaysOn ? ["/bin/sleep", "600"] : args),

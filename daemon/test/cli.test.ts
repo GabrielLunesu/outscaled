@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, readdirSync, readlinkSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, readlinkSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { join } from "node:path";
 import { Health, Terminal, Workspace } from "@outscaled/protocol";
 import { fixture } from "./helpers";
 import { localRepository } from "./workspace-helpers";
 import { fakeSsh } from "./ssh-helpers";
+import { shellQuote } from "../src/terminals";
 
 const root = join(import.meta.dir, "..");
 
@@ -36,7 +37,7 @@ beforeAll(async () => {
   if (code !== 0) throw new Error(`Test binary build failed: ${stderr}`);
 }, 60000);
 
-for (const mode of ["source", "compiled"] as const) {
+for (const mode of ["source", "compiled", "installed"] as const) {
   describe(`${mode} daemon and CLI`, () => {
     let f: ReturnType<typeof fixture>;
     let daemon: Bun.Subprocess<"ignore", "pipe", "pipe">;
@@ -50,8 +51,12 @@ for (const mode of ["source", "compiled"] as const) {
       ssh = fakeSsh(f.root);
       env = { ...f.env, WSD_PORT: String(await freePort()) };
       address = `http://127.0.0.1:${env.WSD_PORT}`;
-      cli = mode === "source" ? [process.execPath, "src/ws.ts"] : [join(root, "dist/ws")];
-      const command = mode === "source" ? [process.execPath, "src/wsd.ts"] : [join(root, "dist/wsd")];
+      const installed = join(f.root, "copied daemon 'with spaces'");
+      if (mode === "installed") copyFileSync(join(root, "dist/wsd"), installed);
+      cli = mode === "source" ? [process.execPath, "src/ws.ts"]
+        : mode === "installed" ? [installed, "--ws-cli"] : [join(root, "dist/ws")];
+      const command = mode === "source" ? [process.execPath, "src/wsd.ts"]
+        : [mode === "installed" ? installed : join(root, "dist/wsd")];
       daemon = Bun.spawn(command, { cwd: root, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
       const deadline = Date.now() + 5000;
       while (Date.now() < deadline) {
@@ -210,6 +215,49 @@ for (const mode of ["source", "compiled"] as const) {
       expect(result.code).toBe(1);
       expect(result.stderr.trim().split("\n")).toHaveLength(1);
       expect(result.stderr).toContain(`wsd isn't reachable at http://127.0.0.1:${port}`);
+    }, 10000);
+
+    test("a fake claude executes launch hooks by absolute path, including from a copied binary", async () => {
+      const folder = join(f.root, "hook workspace");
+      const bin = join(f.root, "fake bin");
+      mkdirSync(folder);
+      mkdirSync(bin);
+      const fake = join(bin, "claude");
+      writeFileSync(fake, `#!${process.execPath}
+const args = process.argv.slice(2);
+const settings = JSON.parse(await Bun.file(args[1]).text());
+const command = settings.hooks.SessionStart[0].hooks[0].command;
+const child = Bun.spawn(["/bin/sh", "-c", command], {
+  env: {...process.env, PATH: "/usr/bin:/bin"}, stdin: new Blob([JSON.stringify({hook_event_name: "SessionStart"})]), stdout: "pipe", stderr: "pipe"
+});
+await Bun.write("hook-result.json", JSON.stringify({args, terminal: process.env.WSD_TERMINAL, port: process.env.WSD_PORT, code: await child.exited, stdout: await new Response(child.stdout).text(), stderr: await new Response(child.stderr).text()}));
+await Bun.sleep(600000);
+`, { mode: 0o755 });
+      expect((await execute([...cli, "new", "hook-demo", "--path", folder], env)).code).toBe(0);
+      const opened = await execute([...cli, "term", "open", "hook-demo", "--name", "c1", "--cmd", `${shellQuote(fake)} 'quoted argument'`, "--json"], env);
+      expect(opened.code).toBe(0);
+      const row = Terminal.parse(JSON.parse(opened.stdout));
+      let result: any;
+      for (let attempt = 0; attempt < 150; attempt++) {
+        if (await Bun.file(join(folder, "hook-result.json")).exists()) {
+          result = JSON.parse(await Bun.file(join(folder, "hook-result.json")).text());
+          break;
+        }
+        await Bun.sleep(20);
+      }
+      expect(result).toEqual({
+        args: ["--settings", join(f.config.stateDir, "claude-settings.json"), "quoted argument"],
+        terminal: row.id, port: env.WSD_PORT, code: 0, stdout: "", stderr: "",
+      });
+      const listed = await execute([...cli, "term", "ls", "hook-demo", "--json"], env);
+      expect(Terminal.array().parse(JSON.parse(listed.stdout))[0]).toMatchObject({ runtime: "claude-code", status: "idle" });
+      for (const overrides of [{ WSD_TERMINAL: "" }, { WSD_TERMINAL: row.id, WSD_PORT: String(await freePort()) }]) {
+        const child = Bun.spawn([...cli, "hook", "claude-code"], {
+          cwd: root, env: { ...env, ...overrides }, stdin: new Blob(['{"hook_event_name":"Stop"}']), stdout: "pipe", stderr: "pipe",
+        });
+        const [code, stdout, stderr] = await Promise.all([child.exited, new Response(child.stdout).text(), new Response(child.stderr).text()]);
+        expect({ code, stdout, stderr }).toEqual({ code: 0, stdout: "", stderr: "" });
+      }
     }, 10000);
   });
 }

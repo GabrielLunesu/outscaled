@@ -2,28 +2,30 @@ import type { Config } from "./config";
 import type { RouteContext } from "./context";
 import { apiError } from "./http";
 import { createHealthRoute } from "./routes/health";
+import { createHooksRoute } from "./routes/hooks";
 import { createTerminalsRoute } from "./routes/terminals";
 import { createWorkspacesRoute } from "./routes/workspaces";
 import { State } from "./state";
 import { Supervisor, type SupervisorOptions } from "./supervisor";
-import { Terminals } from "./terminals";
+import { Terminals, writeClaudeSettings } from "./terminals";
 import { Tmux } from "./tmux";
 
 export async function startServer(config: Config, supervisorOptions?: SupervisorOptions) {
   const state = new State(config.statePath);
   try {
     const tmux = new Tmux(config.tmuxSocket);
-    const terminals = new Terminals(state, tmux);
+    const launch = { claudeSettings: writeClaudeSettings(config.stateDir), port: config.port };
+    const terminals = new Terminals(state, tmux, launch);
     await terminals.reconcile();
     const supervisor = new Supervisor(state, tmux, terminals, supervisorOptions);
     const context: RouteContext = { config, state, terminals };
-    const routes = [createHealthRoute(context), createWorkspacesRoute(context), createTerminalsRoute(context)];
+    const routes = [createHealthRoute(context), createWorkspacesRoute(context), createTerminalsRoute(context), createHooksRoute(context)];
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: config.port,
-      async fetch(request) {
+      async fetch(request, server) {
         for (const route of routes) {
-          const response = await route(request);
+          const response = await route(request, server.requestIP(request)?.address);
           if (response) return response;
         }
         return apiError(404, "not_found", "Route not found");
@@ -33,6 +35,7 @@ export async function startServer(config: Config, supervisorOptions?: Supervisor
         return apiError(500, "internal_error", "Internal server error");
       },
     });
+    launch.port = server.port!;
     supervisor.start();
     return {
       server,

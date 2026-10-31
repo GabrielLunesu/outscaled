@@ -36,6 +36,6 @@ export async function term(args: string[]): Promise<void> {
   const terminals = Terminal.array().parse(await client.request("GET", path));
   if (values.json) console.log(JSON.stringify(terminals));
   else for (const terminal of terminals) {
-    console.log([terminal.name, terminal.state, terminal.session, terminal.command.replace(/[\r\n]+/g, " ")].join("\t"));
+    console.log([terminal.name, terminal.state, terminal.status ?? "-", terminal.session, terminal.command.replace(/[\r\n]+/g, " ")].join("\t"));
   }
 }
