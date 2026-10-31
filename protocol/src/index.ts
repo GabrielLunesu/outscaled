@@ -86,6 +86,16 @@ export const ClaudeCodeHookRequest = z.object({
   payload: ClaudeCodeHookPayload,
 });
 
+// Codex appends one JSON argument to its notify argv; preserve future fields.
+export const CodexHookPayload = z.looseObject({
+  type: z.string().min(1),
+});
+export type CodexHookPayload = z.infer<typeof CodexHookPayload>;
+export const CodexHookRequest = z.object({
+  terminal: z.string().min(1),
+  payload: CodexHookPayload,
+});
+
 export const ApiError = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
 });

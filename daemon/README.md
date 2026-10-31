@@ -38,6 +38,7 @@ in that startup wrapper and use `bun src/ws.ts health` from `daemon/`.
 | `ws term open <workspace> --name <name> [--cmd <command>] [--always-on]` | Start a terminal as tmux session `ws-<workspace>-<name>` in the workspace folder; without `--cmd` it opens your login shell |
 | `ws term ls <workspace>` | List terminals with process state and agent status (`-` for shells); `--json` includes runtime, status and `statusChangedAt` |
 | `ws hook claude-code` | Forward Claude hook JSON from stdin to the local daemon using `WSD_TERMINAL` and `WSD_PORT`; silent, best effort, always exits 0 |
+| `ws hook codex <notify-json>` | Forward Codex's last-argument notify JSON to the local daemon; silent, best effort, always exits 0 |
 
 The health, new and term commands take `--json` for raw output and `--on <server>`.
 The default is `local`, which connects directly to the local daemon.
@@ -47,9 +48,20 @@ Claude commands (including an absolute path to `claude`) launch with a wsd-owned
 path and report `idle` at session start and turn end, `working` on prompts and
 tool use, and `needs_input` on permission requests. Idle reminders are ignored.
 The stored command remains the original command; workspace and user Claude
-settings are never edited. Agent status starts at `starting` and is independent
-of process state. Codex commands are identified but their status hooks are a
-later Phase 2 task.
+settings are never edited.
+
+Codex commands launch with `-c 'notify=[<absolute ws argv>, "hook", "codex"]'`.
+The original command is stored unchanged, and no Codex config files are edited.
+`agent-turn-complete` notifications report `idle`. The supervisor checks tmux
+3.8's `pane_output_generation` every 500 ms: new output after idle reports
+`working`, with a one-second grace period after notify for Codex's final redraw.
+Fresh Codex terminals become `idle` after about two seconds without output.
+Composer redraws while typing also count as output; this fallback cannot
+reliably distinguish them from agent output.
+
+Agent status starts at `starting` and is independent of process state. An
+always-on agent returns to `starting` when respawned; exited and crashed agents
+retain their last status. Every status change emits `terminal.status`.
 
 The hook command is local-only and takes no `--on` or `--json` options. It does
 nothing outside wsd terminals and gives up after about a second if wsd is down.
