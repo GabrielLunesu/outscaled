@@ -6,7 +6,14 @@ import { TerminalConflict } from "../terminals";
 export function createTerminalsRoute(context: RouteContext) {
   const { terminals } = context;
   return async (request: Request): Promise<Response | undefined> => {
-    const match = /^\/v1\/workspaces\/([^/]+)\/terminals$/.exec(new URL(request.url).pathname);
+    const path = new URL(request.url).pathname;
+    if (path === "/v1/terminals" && request.method === "GET") {
+      const rows = (await Promise.all(context.state.listWorkspaces()
+        .map(workspace => terminals.list(workspace.slug)))).flat();
+      rows.sort((a, b) => a.workspace.localeCompare(b.workspace) || a.name.localeCompare(b.name));
+      return Response.json(rows);
+    }
+    const match = /^\/v1\/workspaces\/([^/]+)\/terminals$/.exec(path);
     if (!match || (request.method !== "GET" && request.method !== "POST")) return;
     const workspace = match[1]!;
     if (!Slug.safeParse(workspace).success) {

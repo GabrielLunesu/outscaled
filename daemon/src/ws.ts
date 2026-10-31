@@ -2,6 +2,7 @@ import { health } from "./cli/health";
 import { newWorkspace } from "./cli/new";
 import { term } from "./cli/term";
 import { hook } from "./cli/hook";
+import { status } from "./cli/status";
 
 export async function runCli(args = process.argv.slice(2)): Promise<number> {
   const [command, ...options] = args;
@@ -15,8 +16,9 @@ export async function runCli(args = process.argv.slice(2)): Promise<number> {
       case "health": await health(options); break;
       case "new": await newWorkspace(options); break;
       case "term": await term(options); break;
+      case "status": return await status(options);
       default:
-        console.error("usage: ws <health | new | term open | term ls | hook> [--on <server>] [--json]");
+        console.error("usage: ws <health | new | term open | term ls | status | hook> [options]; ws status [--json] covers every server (no --on)");
         return 1;
     }
     return 0;
