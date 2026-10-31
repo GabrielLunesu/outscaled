@@ -18,7 +18,8 @@ interface Watch {
 
 interface OutputWatch {
   pid: number;
-  generation: number;
+  generation: number | null;
+  activity: number;
   lastOutputAt: number;
 }
 
@@ -99,15 +100,21 @@ export class Supervisor {
 
   private inspectOutput(terminal: Terminal, pane: TmuxPane): void {
     const now = Date.now();
+    // The fallback cannot see subsequent output in the same second. Allow for
+    // its full timestamp bucket before counting two seconds of startup silence.
+    const outputAt = pane.outputGeneration === null ? Math.max(now, (pane.windowActivity + 1) * 1000) : now;
     let watch = this.outputWatches.get(terminal.id);
     if (!watch || watch.pid !== pane.pid) {
-      watch = { pid: pane.pid, generation: pane.outputGeneration, lastOutputAt: now };
+      watch = { pid: pane.pid, generation: pane.outputGeneration, activity: pane.windowActivity, lastOutputAt: outputAt };
       this.outputWatches.set(terminal.id, watch);
     }
-    const output = watch.generation !== pane.outputGeneration;
+    const output = pane.outputGeneration === null
+      ? watch.activity !== pane.windowActivity
+      : watch.generation !== pane.outputGeneration;
+    watch.generation = pane.outputGeneration;
+    watch.activity = pane.windowActivity;
     if (output) {
-      watch.generation = pane.outputGeneration;
-      watch.lastOutputAt = now;
+      watch.lastOutputAt = outputAt;
     }
     if (terminal.status === "starting") {
       if (now - watch.lastOutputAt >= 2000) this.state.updateTerminalStatus(terminal.id, "idle");

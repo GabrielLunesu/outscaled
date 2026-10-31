@@ -52,10 +52,14 @@ settings are never edited.
 
 Codex commands launch with `-c 'notify=[<absolute ws argv>, "hook", "codex"]'`.
 The original command is stored unchanged, and no Codex config files are edited.
-`agent-turn-complete` notifications report `idle`. The supervisor checks tmux
-3.8's `pane_output_generation` every 500 ms: new output after idle reports
-`working`, with a one-second grace period after notify for Codex's final redraw.
+`agent-turn-complete` notifications report `idle`. Every 500 ms the supervisor
+checks `pane_output_generation` where tmux provides it, otherwise it checks
+`window_activity` for that pane's window (one-second resolution, including tmux
+3.6). The fallback cannot distinguish output batches within the same second.
+New output after idle reports `working`, with a one-second grace period after
+notify for Codex's final redraw.
 Fresh Codex terminals become `idle` after about two seconds without output.
+The activity fallback allows up to one extra second for timestamp uncertainty.
 Composer redraws while typing also count as output; this fallback cannot
 reliably distinguish them from agent output.
 

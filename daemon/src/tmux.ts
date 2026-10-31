@@ -9,7 +9,8 @@ export interface TmuxPane extends TmuxSession {
   exitStatus: number | null;
   exitSignal: string | null;
   diedAt: number | null;
-  outputGeneration: number;
+  outputGeneration: number | null;
+  windowActivity: number;
 }
 
 class TmuxError extends Error {
@@ -88,20 +89,21 @@ export class Tmux {
     let output: string;
     try {
       output = await this.run(["list-panes", "-a", "-F",
-        "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_dead_signal}\t#{pane_dead_time}\t#{pane_output_generation}"]);
+        "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_dead_signal}\t#{pane_dead_time}\t#{pane_output_generation}\t#{window_activity}"]);
     } catch (error) {
       if (noServer(error)) return [];
       throw error;
     }
     return output ? output.split("\n").map(line => {
-      const [name, pid, pane, dead, status, signal, time, generation] = line.split("\t");
+      const [name, pid, pane, dead, status, signal, time, generation, activity] = line.split("\t");
       return {
         name: name!, pid: Number(pid), pane: pane!, dead: dead === "1",
         exitStatus: status ? Number(status) : null, exitSignal: signal || null,
         diedAt: time ? Number(time) * 1000 : null,
-        // tmux 3.8 increments this for every processed batch of pane output,
-        // including multiple batches within the same second.
-        outputGeneration: Number(generation || 0),
+        // An unsupported format expands to empty. Preserve that distinction:
+        // zero is a valid generation, while older tmux needs window activity.
+        outputGeneration: generation ? Number(generation) : null,
+        windowActivity: Number(activity || 0),
       };
     }) : [];
   }
