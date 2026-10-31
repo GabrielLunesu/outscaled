@@ -3,8 +3,6 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-/* eslint-disable header/header -- Outscaled sources carry Gabriel Lunesu's copyright. */
-
 import { Codicon } from '../../../../base/common/codicons.js';
 import { ThemeIcon } from '../../../../base/common/themables.js';
 import { TerminalIcon } from '../../../../platform/terminal/common/terminal.js';
