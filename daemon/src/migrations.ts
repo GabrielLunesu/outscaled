@@ -36,6 +36,26 @@ const migrations = [
   `ALTER TABLE terminals ADD COLUMN runtime TEXT CHECK (runtime IN ('claude-code', 'codex'));
   ALTER TABLE terminals ADD COLUMN status TEXT CHECK (status IN ('starting', 'working', 'needs_input', 'idle'));
   ALTER TABLE terminals ADD COLUMN statusChangedAt TEXT;`,
+  `CREATE TABLE schedules (
+    workspace TEXT NOT NULL REFERENCES workspaces(slug),
+    agent TEXT NOT NULL,
+    config TEXT NOT NULL CHECK (json_valid(config)),
+    firstSeenAt TEXT NOT NULL,
+    lastStartedAt TEXT,
+    nextDueAt TEXT NOT NULL,
+    PRIMARY KEY (workspace, agent)
+  );
+  CREATE TABLE runs (
+    id TEXT PRIMARY KEY,
+    workspace TEXT NOT NULL REFERENCES workspaces(slug),
+    agent TEXT NOT NULL,
+    startedAt TEXT NOT NULL,
+    endedAt TEXT,
+    exitCode INTEGER,
+    logPath TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed', 'interrupted'))
+  );
+  CREATE INDEX runs_workspace_started ON runs(workspace, startedAt DESC);`,
 ];
 
 export function migrate(db: Database): void {

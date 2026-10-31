@@ -111,3 +111,46 @@ export const Event = z.object({
   acked: z.boolean(),
 });
 export type Event = z.infer<typeof Event>;
+
+export const ScheduleInterval = z.string().regex(/^[1-9]\d*[smhd]$/).refine(value => {
+  const ms = Number(value.slice(0, -1)) * ({ s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[value.at(-1)!] ?? 0);
+  return Number.isSafeInteger(ms) && ms <= 8_640_000_000_000_000 - Date.now();
+}, "Interval is too large");
+export const PromptPath = z.string().min(1).refine(value => {
+  if (value.startsWith("/") || value.includes("\0")) return false;
+  let depth = 0;
+  for (const part of value.split("/")) {
+    if (part === "..") { if (--depth < 0) return false; }
+    else if (part && part !== ".") depth++;
+  }
+  return depth > 0;
+}, "Prompt must stay inside .ws/");
+export const ScheduledAgent = z.discriminatedUnion("runtime", [
+  z.object({ name: Slug, mode: z.literal("scheduled"), runtime: z.literal("claude-code"), every: ScheduleInterval, prompt: PromptPath }),
+  z.object({ name: Slug, mode: z.literal("scheduled"), runtime: z.literal("codex"), every: ScheduleInterval, prompt: PromptPath }),
+  z.object({ name: Slug, mode: z.literal("scheduled"), runtime: z.literal("script"), every: ScheduleInterval,
+    command: z.string().min(1).refine(value => value.trim().length > 0 && !value.includes("\0")) }),
+]);
+export type ScheduledAgent = z.infer<typeof ScheduledAgent>;
+
+export const Schedule = z.object({
+  workspace: Slug,
+  agent: Slug,
+  config: ScheduledAgent,
+  firstSeenAt: timestamp,
+  lastStartedAt: timestamp.nullable(),
+  nextDueAt: timestamp,
+});
+export type Schedule = z.infer<typeof Schedule>;
+
+export const Run = z.object({
+  id: z.string().min(1),
+  workspace: Slug,
+  agent: Slug,
+  startedAt: timestamp,
+  endedAt: timestamp.nullable(),
+  exitCode: z.number().int().nullable(),
+  logPath: z.string().min(1),
+  status: z.enum(["running", "succeeded", "failed", "interrupted"]),
+});
+export type Run = z.infer<typeof Run>;

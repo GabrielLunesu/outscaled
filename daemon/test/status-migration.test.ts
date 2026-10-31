@@ -38,7 +38,7 @@ test("version-1 state upgrades with derived runtimes, unknown statuses and prese
   let state: State | undefined;
   try {
     state = new State(path);
-    expect(state.db.query("PRAGMA user_version").get()).toEqual({ user_version: 2 });
+    expect(state.db.query("PRAGMA user_version").get()).toEqual({ user_version: 3 });
     expect(state.getWorkspace("demo")).toEqual(workspace);
     for (const [id, runtime] of [["c1", "claude-code"], ["c2", "claude-code"], ["x1", "codex"], ["shell", null], ["other", null]]) {
       expect(state.getTerminal(id!)!).toMatchObject({ runtime, status: null, statusChangedAt: null, state: "running", pid: 123, restarts: 3 });
