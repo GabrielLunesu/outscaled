@@ -36,10 +36,23 @@ in that startup wrapper and use `bun src/ws.ts health` from `daemon/`.
 | `ws new <slug> --repo <url>` | Clone a repo into a new workspace |
 | `ws new <slug> --path <dir>` | Register an existing folder in place; nothing is copied, moved or written |
 | `ws term open <workspace> --name <name> [--cmd <command>] [--always-on]` | Start a terminal as tmux session `ws-<workspace>-<name>` in the workspace folder; without `--cmd` it opens your login shell |
-| `ws term ls <workspace>` | List a workspace's terminals and their state |
+| `ws term ls <workspace>` | List terminals with process state and agent status (`-` for shells); `--json` includes runtime, status and `statusChangedAt` |
+| `ws hook claude-code` | Forward Claude hook JSON from stdin to the local daemon using `WSD_TERMINAL` and `WSD_PORT`; silent, best effort, always exits 0 |
 
-Every command takes `--json` for raw output and `--on <server>`. The default is
-`local`, which connects directly to the local daemon.
+The health, new and term commands take `--json` for raw output and `--on <server>`.
+The default is `local`, which connects directly to the local daemon.
+
+Claude commands (including an absolute path to `claude`) launch with a wsd-owned
+`claude-settings.json` in the state directory. Its hooks call the CLI by absolute
+path and report `idle` at session start and turn end, `working` on prompts and
+tool use, and `needs_input` on permission requests. Idle reminders are ignored.
+The stored command remains the original command; workspace and user Claude
+settings are never edited. Agent status starts at `starting` and is independent
+of process state. Codex commands are identified but their status hooks are a
+later Phase 2 task.
+
+The hook command is local-only and takes no `--on` or `--json` options. It does
+nothing outside wsd terminals and gives up after about a second if wsd is down.
 
 ## Remote commands over SSH
 

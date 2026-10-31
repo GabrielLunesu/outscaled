@@ -29,4 +29,5 @@ export const workspace: Workspace = {
 export const terminal: Terminal = {
   id: "terminal-1", workspace: "demo", name: "shell", command: "/bin/sh", session: "ws-demo-shell",
   alwaysOn: false, state: "running", restarts: 0, pid: null, createdAt: workspace.createdAt,
+  runtime: null, status: null, statusChangedAt: null,
 };

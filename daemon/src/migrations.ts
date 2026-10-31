@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { terminalRuntime } from "./terminals";
 
 const migrations = [
   `CREATE TABLE workspaces (
@@ -32,6 +33,9 @@ const migrations = [
   );
   CREATE INDEX events_time ON events(time);
   CREATE INDEX events_workspace ON events(workspace);`,
+  `ALTER TABLE terminals ADD COLUMN runtime TEXT CHECK (runtime IN ('claude-code', 'codex'));
+  ALTER TABLE terminals ADD COLUMN status TEXT CHECK (status IN ('starting', 'working', 'needs_input', 'idle'));
+  ALTER TABLE terminals ADD COLUMN statusChangedAt TEXT;`,
 ];
 
 export function migrate(db: Database): void {
@@ -40,6 +44,11 @@ export function migrate(db: Database): void {
     if (version > migrations.length) throw new Error(`State database version ${version} is newer than this wsd supports`);
     for (let index = version; index < migrations.length; index++) {
       db.exec(migrations[index]!);
+      if (index === 1) {
+        for (const row of db.query<{ id: string; command: string }, []>("SELECT id, command FROM terminals").all()) {
+          db.query("UPDATE terminals SET runtime = ? WHERE id = ?").run(terminalRuntime(row.command), row.id);
+        }
+      }
       db.exec(`PRAGMA user_version = ${index + 1}`);
     }
   }).immediate();

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { Event, Terminal, Workspace } from "@outscaled/protocol";
+import { Event, Terminal, TerminalStatus, Workspace } from "@outscaled/protocol";
 import { migrate } from "./migrations";
 
 type WorkspaceRow = Omit<Workspace, "inPlace"> & { inPlace: number };
@@ -57,9 +57,10 @@ export class State {
   insertTerminal(value: Terminal): Terminal {
     const t = Terminal.parse(value);
     this.db.query(`INSERT INTO terminals
-      (id, workspace, name, command, session, alwaysOn, state, restarts, pid, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      (id, workspace, name, command, session, alwaysOn, state, restarts, pid, createdAt, runtime, status, statusChangedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       t.id, t.workspace, t.name, t.command, t.session, Number(t.alwaysOn), t.state, t.restarts, t.pid, t.createdAt,
+      t.runtime, t.status, t.statusChangedAt,
     );
     return t;
   }
@@ -89,6 +90,25 @@ export class State {
     return this.db.query<{ total: number; running: number }, []>(
       "SELECT count(*) AS total, coalesce(sum(state = 'running'), 0) AS running FROM terminals",
     ).get()!;
+  }
+
+  updateTerminalStatus(id: string, status: TerminalStatus): Terminal | null {
+    TerminalStatus.parse(status);
+    return this.db.transaction(() => {
+      const current = this.getTerminal(id);
+      if (!current || !current.runtime || current.status === status) return current;
+      const time = new Date().toISOString();
+      this.db.query("UPDATE terminals SET status = ?, statusChangedAt = ? WHERE id = ?").run(status, time, id);
+      const event = {
+        id: crypto.randomUUID(), type: "terminal.status", workspace: current.workspace,
+        terminal: id, payload: { terminal: id, oldStatus: current.status, newStatus: status }, time, acked: false,
+      };
+      this.insertEvent(event);
+      if (status === "needs_input") {
+        this.insertEvent({ ...event, id: crypto.randomUUID(), type: "agent.needs_input" });
+      }
+      return this.getTerminal(id);
+    })();
   }
 
   insertEvent(value: Event): Event {
