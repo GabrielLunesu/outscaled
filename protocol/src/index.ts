@@ -75,6 +75,18 @@ export const OpenTerminalRequest = z.object({
 });
 export type OpenTerminalRequest = z.infer<typeof OpenTerminalRequest>;
 
+export const TerminalKey = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,39}$/);
+export const TerminalInputRequest = z.object({
+  text: z.string().refine(value => !value.includes("\0"), "Text must not contain NUL bytes").optional(),
+  keys: z.array(TerminalKey).min(1).max(100).optional(),
+  submit: z.boolean().optional(),
+}).refine(value => value.text !== undefined || value.keys !== undefined || value.submit === true, {
+  message: "Provide text, keys, or submit: true",
+});
+export type TerminalInputRequest = z.infer<typeof TerminalInputRequest>;
+export const TerminalOutputLines = z.number().int().min(1).max(5000).default(200);
+export const TerminalOutput = z.object({ text: z.string() });
+
 // Preserve Claude's raw JSON, including fields added by newer versions.
 export const ClaudeCodeHookPayload = z.looseObject({
   hook_event_name: z.string().min(1),

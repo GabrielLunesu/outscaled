@@ -1,11 +1,12 @@
 import { userInfo } from "node:os";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import type { OpenTerminalRequest, Terminal, TerminalRuntime, Workspace } from "@outscaled/protocol";
+import type { OpenTerminalRequest, Terminal, TerminalInputRequest, TerminalRuntime, Workspace } from "@outscaled/protocol";
 import type { State } from "./state";
 import { Tmux } from "./tmux";
 
 export class TerminalConflict extends Error {}
+export class TerminalNotFound extends Error {}
 
 export const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -182,13 +183,55 @@ export class Terminals {
 
   list(workspace: string): Promise<Terminal[]> {
     return this.serial(async () => {
-      const sessions = new Set((await this.tmux.listSessions()).map(session => session.name));
+      const sessions = new Map((await this.tmux.listPanes()).map(pane => [pane.name, pane]));
       return this.state.listTerminals(workspace).map(terminal => {
-        if (!sessions.has(terminal.session) && terminal.state !== "crashed") {
-          return this.state.updateTerminalState(terminal.id, { state: "exited", pid: null })!;
+        const pane = sessions.get(terminal.session);
+        if ((!pane || pane.dead) && terminal.state !== "crashed") {
+          return this.state.updateTerminalState(terminal.id, { state: pane?.dead && terminal.alwaysOn ? "restarting" : "exited", pid: null })!;
         }
         return terminal;
       });
+    });
+  }
+
+  private async runningPane(workspace: string, name: string) {
+    const terminal = this.state.listTerminals(workspace).find(terminal => terminal.name === name);
+    if (!terminal) throw new TerminalNotFound("Terminal not found");
+    const pane = (await this.tmux.listPanes()).find(pane => pane.name === terminal.session);
+    if (!pane || pane.dead || terminal.state !== "running") {
+      if ((!pane || pane.dead) && terminal.state !== "crashed") {
+        this.state.updateTerminalState(terminal.id, { state: pane?.dead && terminal.alwaysOn ? "restarting" : "exited", pid: null });
+      }
+      throw new TerminalConflict("Terminal is not running");
+    }
+    return { terminal, pane: pane.pane };
+  }
+
+  input(workspace: string, name: string, request: TerminalInputRequest): Promise<Terminal> {
+    return this.serial(async () => {
+      const { terminal, pane } = await this.runningPane(workspace, name);
+      if (request.text !== undefined) await this.tmux.pasteText(pane, request.text);
+      await this.tmux.sendKeys(pane, request.keys ?? []);
+      const submit = request.submit ?? request.text !== undefined;
+      if (submit) {
+        // TUIs need time to process the bracketed paste before accepting Enter.
+        if (request.text !== undefined) await Bun.sleep(100);
+        await this.tmux.sendKeys(pane, ["Enter"]);
+      }
+      if (terminal.runtime && (submit || request.keys?.some(key => /^(Enter|Return|C-m|C-j)$/.test(key)))) {
+        this.codexNotifyTimes.delete(terminal.id);
+        // Hooks and status reads also use this lock, so no caller can observe
+        // the previous idle after a successful submission, even before output.
+        return this.state.updateTerminalStatus(terminal.id, "working")!;
+      }
+      return terminal;
+    });
+  }
+
+  output(workspace: string, name: string, lines: number): Promise<string> {
+    return this.serial(async () => {
+      const { pane } = await this.runningPane(workspace, name);
+      return this.tmux.captureOutput(pane, lines);
     });
   }
 }

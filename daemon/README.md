@@ -42,6 +42,7 @@ in that startup wrapper and use `bun src/ws.ts health` from `daemon/`.
 | `ws run log <run-id>` | Print the run's combined stdout and stderr |
 | `ws hook claude-code` | Forward Claude hook JSON from stdin to the local daemon using `WSD_TERMINAL` and `WSD_PORT`; silent, best effort, always exits 0 |
 | `ws hook codex <notify-json>` | Forward Codex's last-argument notify JSON to the local daemon; silent, best effort, always exits 0 |
+| `ws mcp [--on <server>]` | Serve agent terminal tools over stdio MCP, using the local daemon or the existing SSH client |
 
 The health, new, term and run ls commands take `--json` for raw output.
 All these commands, including run log, take `--on <server>`.
@@ -91,6 +92,56 @@ retain their last status. Every status change emits `terminal.status`.
 
 The hook command is local-only and takes no `--on` or `--json` options. It does
 nothing outside wsd terminals and gives up after about a second if wsd is down.
+
+## Agent terminal tools over MCP
+
+Point Claude Code or another MCP client at the compiled `ws` executable:
+
+```json
+{
+  "mcpServers": {
+    "ws": {
+      "command": "/absolute/path/to/ws",
+      "args": ["mcp", "--on", "local"]
+    }
+  }
+}
+```
+
+For a remote daemon, replace `local` with an SSH host or alias. `WSD_PORT` in
+the server's `env` selects a custom daemon port, just as for other CLI commands.
+Only MCP protocol messages go to stdout; diagnostics go to stderr.
+
+| Tool | Input and result |
+| --- | --- |
+| `list_terminals` | Optional `workspace`; returns terminals with name, process state, agent status and command. Omit workspace for all workspaces on this server |
+| `open_terminal` | `workspace`, `name`, optional `command` and `alwaysOn`; opens a terminal and returns its record |
+| `send_input` | `workspace`, `name`, optional `text`, `keys` and `submit`; returns the terminal record after sending input |
+| `wait_for_status` | `workspace`, `name`, optional `status` (default `idle`) and `timeoutSeconds` (default 600, max 3600); returns the matching terminal or a tool error on exit or timeout |
+| `read_output` | `workspace`, `name`, optional `lines` (default 200, max 5000); returns `{text}` including scrollback |
+
+A new Codex or Claude terminal can show a folder-trust or onboarding screen.
+Inspect it with `read_output` and answer using `send_input` keys such as `Down`
+and `Enter` before sending a prompt. For two agents, open both with
+`command: "codex"`, handle their startup screens, send each its prompt, then
+wait for each to be idle and read its output. A submitted input immediately
+sets agent status to `working`, so a following wait cannot return the old idle.
+
+The underlying API also exposes:
+
+- `POST /v1/workspaces/:ws/terminals/:name/input` with `{text?, keys?, submit?}`.
+  Text is sent as one tmux bracketed paste (when the app enables bracketed paste),
+  preserving newlines and UTF-8. Keys follow the paste; `submit: true` sends an
+  additional Enter after a short paste-processing pause. Submit defaults to true
+  when text is provided. Use `submit: false` to leave text in the composer.
+  Key names accept letters, digits and hyphens (for example `Escape`, `C-c`,
+  `Down`); unsafe spellings are rejected before sending any input.
+- `GET /v1/workspaces/:ws/terminals/:name/output?lines=N` returns `{text}` with
+  wrapped lines joined and trailing blank lines removed. The default is 200
+  lines and the maximum is 5000; out-of-range limits return 400.
+
+Both routes return 404 for unknown terminals and 409 for terminals that are no
+longer running. They use the same lifecycle lock as hooks and supervision.
 
 ## Remote commands over SSH
 
