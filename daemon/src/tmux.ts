@@ -31,7 +31,8 @@ export class Tmux {
     const env = { ...process.env };
     // A daemon started inside tmux must still use the configured/default socket.
     delete env.TMUX;
-    const child = Bun.spawn(["tmux", ...(this.socket ? ["-S", this.socket] : []), ...args], {
+    // Preserve UTF-8 output and tab delimiters even without a UTF-8 locale.
+    const child = Bun.spawn(["tmux", "-u", ...(this.socket ? ["-S", this.socket] : []), ...args], {
       // The first client starts the server. Isolate it from wsd's process group
       // so a Ctrl-C sent to the daemon's whole group cannot kill its terminals.
       detached: true,
