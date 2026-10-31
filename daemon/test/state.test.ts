@@ -13,7 +13,7 @@ afterEach(() => { state?.close(); state = undefined; f?.cleanup(); });
 test("migration creates full schema once and preserves data across reopen", () => {
   f = fixture();
   state = new State(f.config.statePath);
-  expect(state.db.query("PRAGMA user_version").get()).toEqual({ user_version: 2 });
+  expect(state.db.query("PRAGMA user_version").get()).toEqual({ user_version: 3 });
   state.insertWorkspace(workspace);
   state.insertTerminal(terminal);
   const event: Event = { id: "event-1", type: "terminal.status", workspace: workspace.slug, terminal: terminal.id,

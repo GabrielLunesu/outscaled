@@ -5,12 +5,14 @@ import { createHealthRoute } from "./routes/health";
 import { createHooksRoute } from "./routes/hooks";
 import { createTerminalsRoute } from "./routes/terminals";
 import { createWorkspacesRoute } from "./routes/workspaces";
+import { createRunsRoute } from "./routes/runs";
+import { Schedules, type SchedulesOptions } from "./schedules";
 import { State } from "./state";
 import { Supervisor, type SupervisorOptions } from "./supervisor";
 import { Terminals, writeClaudeSettings } from "./terminals";
 import { Tmux } from "./tmux";
 
-export async function startServer(config: Config, supervisorOptions?: SupervisorOptions) {
+export async function startServer(config: Config, supervisorOptions?: SupervisorOptions, schedulesOptions?: SchedulesOptions) {
   const state = new State(config.statePath);
   try {
     const tmux = new Tmux(config.tmuxSocket);
@@ -19,7 +21,8 @@ export async function startServer(config: Config, supervisorOptions?: Supervisor
     await terminals.reconcile();
     const supervisor = new Supervisor(state, tmux, terminals, supervisorOptions);
     const context: RouteContext = { config, state, terminals };
-    const routes = [createHealthRoute(context), createWorkspacesRoute(context), createTerminalsRoute(context), createHooksRoute(context)];
+    const schedules = new Schedules(state, config.stateDir, schedulesOptions);
+    const routes = [createHealthRoute(context), createWorkspacesRoute(context), createTerminalsRoute(context), createHooksRoute(context), createRunsRoute(context)];
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: config.port,
@@ -36,11 +39,14 @@ export async function startServer(config: Config, supervisorOptions?: Supervisor
       },
     });
     launch.port = server.port!;
+    await schedules.start();
     supervisor.start();
     return {
       server,
       state,
+      schedules,
       async stop() {
+        await schedules.stop();
         await supervisor.stop();
         await server.stop(true);
         state.close();

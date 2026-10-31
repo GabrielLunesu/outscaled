@@ -38,10 +38,13 @@ in that startup wrapper and use `bun src/ws.ts health` from `daemon/`.
 | `ws new <slug> --path <dir>` | Register an existing folder in place; nothing is copied, moved or written |
 | `ws term open <workspace> --name <name> [--cmd <command>] [--always-on]` | Start a terminal as tmux session `ws-<workspace>-<name>` in the workspace folder; without `--cmd` it opens your login shell |
 | `ws term ls <workspace>` | List terminals with process state and agent status (`-` for shells); `--json` includes runtime, status and `statusChangedAt` |
+| `ws run ls <workspace>` | List runs, newest first: agent, status, start time, exit code and run id; accepts `--json` |
+| `ws run log <run-id>` | Print the run's combined stdout and stderr |
 | `ws hook claude-code` | Forward Claude hook JSON from stdin to the local daemon using `WSD_TERMINAL` and `WSD_PORT`; silent, best effort, always exits 0 |
 | `ws hook codex <notify-json>` | Forward Codex's last-argument notify JSON to the local daemon; silent, best effort, always exits 0 |
 
-The health, new and term commands take `--json` for raw output and `--on <server>`.
+The health, new, term and run ls commands take `--json` for raw output.
+All these commands, including run log, take `--on <server>`.
 The default is `local`, which connects directly to the local daemon.
 
 `ws status` always queries `local` first, then the SSH hosts listed in
@@ -136,6 +139,57 @@ Remote behavior is covered by isolated fake-SSH tests and has been verified on
 a real Linux VPS, including cloning, in-place registration and terminal access.
 
 Terminals run on tmux's default socket, so `tmux attach -t ws-<workspace>-<name>` or herdr can attach to them. They keep running when wsd stops, and wsd re-adopts them when it starts. When an `--always-on` terminal's process dies, wsd restarts the same command in the same pane after 1 s, 5 s, 30 s, then every 5 min; after five quick failures in a row it marks the terminal `crashed` and stops.
+
+## Scheduled agents
+
+Create `.ws/workspace.toml` in a registered workspace and a prompt file relative
+to `.ws/`, for example `.ws/prompts/ad-check.md`:
+
+```toml
+[[agent]]
+name = "ad-check"
+runtime = "claude-code"
+mode = "scheduled"
+every = "10m"
+prompt = "prompts/ad-check.md"
+```
+
+`runtime` accepts `claude-code`, `codex` or `script`. Scripts use
+`command = "./check.sh"` in place of `prompt`. Names are unique workspace slugs;
+intervals are positive whole numbers followed by `s`, `m`, `h` or `d`. Prompt
+paths and their symlink targets must stay inside `.ws/`. Other modes and unknown
+keys are ignored. Invalid files or entries are skipped with a diagnostic once
+until the problem changes or is fixed. wsd only reads workspace configuration.
+
+wsd checks configuration every two seconds. The first run starts one interval
+after discovery, and later runs are due one interval after the previous start.
+SQLite preserves the clock across restarts. An overdue schedule runs once;
+missed intervals never accumulate a backlog. If a run is still active at its
+next due time, that execution is skipped and the next check is an interval later.
+Changing an interval recalculates its due time from the last start (or first
+discovery); removing a schedule cancels future executions and retains its runs.
+
+Each execution runs in the workspace through `$SHELL -l -c` (falling back to
+`/bin/sh`), with stdin from `/dev/null`. Claude runs `claude -p <prompt>` and
+Codex runs `codex exec <prompt>`; prompt text is passed as data. Both output
+streams go directly to `<state dir>/logs/<workspace>/<agent>/<run-id>.log`.
+Runs record start/end time, exit code and `running`, `succeeded`, `failed` or
+`interrupted` status. Non-zero exits produce an error in the `run.finished`
+event. wsd stores `run.started` and `run.finished` events in SQLite.
+
+Graceful shutdown stops polling and terminates active scheduled processes;
+unfinished runs from a previous daemon are marked interrupted on startup.
+Always-on and one-off entries in workspace.toml are not launched yet.
+
+```sh
+ws run ls demo
+ws run ls demo --json --on example-alias
+ws run log <run-id> --on example-alias
+```
+
+The API serves `GET /v1/workspaces/:ws/runs` as a JSON array (newest first) and
+`GET /v1/runs/:id/log` as plain text. Unknown workspaces, unknown runs and missing
+log files return 404.
 
 ## Configuration
 

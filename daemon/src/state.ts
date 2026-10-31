@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { Event, Terminal, TerminalStatus, Workspace } from "@outscaled/protocol";
+import { Event, Run, Schedule, Terminal, TerminalStatus, Workspace } from "@outscaled/protocol";
 import { migrate } from "./migrations";
 
 type WorkspaceRow = Omit<Workspace, "inPlace"> & { inPlace: number };
@@ -133,5 +133,70 @@ export class State {
   acknowledgeEvent(id: string, acked = true): Event | null {
     this.db.query("UPDATE events SET acked = ? WHERE id = ?").run(Number(acked), id);
     return this.getEvent(id);
+  }
+
+  listSchedules(workspace: string): Schedule[] {
+    return this.db.query<Omit<Schedule, "config"> & { config: string }, [string]>(
+      "SELECT * FROM schedules WHERE workspace = ? ORDER BY agent",
+    ).all(workspace).map(row => ({ ...row, config: JSON.parse(row.config) }));
+  }
+
+  saveSchedule(value: Schedule): Schedule {
+    const s = Schedule.parse(value);
+    this.db.query(`INSERT INTO schedules (workspace, agent, config, firstSeenAt, lastStartedAt, nextDueAt)
+      VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(workspace, agent) DO UPDATE SET
+      config = excluded.config, lastStartedAt = excluded.lastStartedAt, nextDueAt = excluded.nextDueAt`)
+      .run(s.workspace, s.agent, JSON.stringify(s.config), s.firstSeenAt, s.lastStartedAt, s.nextDueAt);
+    return s;
+  }
+
+  deleteSchedule(workspace: string, agent: string): void {
+    this.db.query("DELETE FROM schedules WHERE workspace = ? AND agent = ?").run(workspace, agent);
+  }
+
+  getRun(id: string): Run | null {
+    return this.db.query<Run, [string]>("SELECT * FROM runs WHERE id = ?").get(id);
+  }
+
+  listRuns(workspace?: string): Run[] {
+    return workspace === undefined
+      ? this.db.query<Run, []>("SELECT * FROM runs ORDER BY startedAt DESC, rowid DESC").all()
+      : this.db.query<Run, [string]>("SELECT * FROM runs WHERE workspace = ? ORDER BY startedAt DESC, rowid DESC").all(workspace);
+  }
+
+  startRun(value: Run): Run {
+    const run = Run.parse(value);
+    return this.db.transaction(() => {
+      this.db.query(`INSERT INTO runs (id, workspace, agent, startedAt, endedAt, exitCode, logPath, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(run.id, run.workspace, run.agent, run.startedAt, run.endedAt, run.exitCode, run.logPath, run.status);
+      this.runEvent(run, "run.started", run.startedAt);
+      return run;
+    })();
+  }
+
+  finishRun(id: string, endedAt: string, exitCode: number | null, status: Exclude<Run["status"], "running">): Run {
+    return this.db.transaction(() => {
+      const current = this.getRun(id);
+      if (!current) throw new Error("Run not found");
+      if (current.status !== "running") return current;
+      this.db.query("UPDATE runs SET endedAt = ?, exitCode = ?, status = ? WHERE id = ? AND status = 'running'")
+        .run(endedAt, exitCode, status, id);
+      const run = this.getRun(id)!;
+      this.runEvent(run, "run.finished", endedAt);
+      return run;
+    })();
+  }
+
+  interruptRuns(time: string): void {
+    for (const run of this.listRuns()) if (run.status === "running") this.finishRun(run.id, time, null, "interrupted");
+  }
+
+  private runEvent(run: Run, type: string, time: string): void {
+    this.insertEvent({
+      id: crypto.randomUUID(), type, workspace: run.workspace, terminal: null, time, acked: false,
+      payload: { run: run.id, agent: run.agent, status: run.status, exitCode: run.exitCode,
+        error: run.status === "failed" || run.status === "interrupted" },
+    });
   }
 }
