@@ -38,6 +38,7 @@ in that startup wrapper and use `bun src/ws.ts health` from `daemon/`.
 | `ws new <slug> --path <dir>` | Register an existing folder in place; nothing is copied, moved or written |
 | `ws term open <workspace> --name <name> [--cmd <command>] [--always-on]` | Start a terminal as tmux session `ws-<workspace>-<name>` in the workspace folder; without `--cmd` it opens your login shell |
 | `ws term ls <workspace>` | List terminals with process state and agent status (`-` for shells); `--json` includes runtime, status and `statusChangedAt` |
+| `ws attach <workspace> <name> [--on <server>]` | Attach the current terminal to a running wsd terminal locally or over SSH; no `--json` |
 | `ws run ls <workspace>` | List runs, newest first: agent, status, start time, exit code and run id; accepts `--json` |
 | `ws run log <run-id>` | Print the run's combined stdout and stderr |
 | `ws hook claude-code` | Forward Claude hook JSON from stdin to the local daemon using `WSD_TERMINAL` and `WSD_PORT`; silent, best effort, always exits 0 |
@@ -155,6 +156,7 @@ ws new demo --on example-alias --repo https://example.invalid/project.git
 ws new existing --on example-alias --path '/absolute/server/folder with spaces'
 ws term open demo --on example-alias --name a1 --cmd claude
 ws term ls demo --on example-alias --json
+ws attach demo a1 --on example-alias
 ```
 
 Install and start `wsd` on the remote machine first, bound to localhost. The CLI
@@ -164,7 +166,7 @@ the daemon port for both local and remote requests; configure a custom SSH port
 in `~/.ssh/config` instead. Each invocation owns its tunnel and removes the
 socket and SSH processes on completion, error, or SIGINT/SIGTERM/SIGHUP.
 
-SSH uses your existing config, identity files, agent, proxy/jump settings and
+API SSH tunnels use your existing config, identity files, agent, proxy/jump settings and
 known-host checks. It runs in batch mode, so establish host trust and unlock any
 required keys with SSH beforehand: password, passphrase and first-contact trust
 prompts cannot be answered by `ws`. Connections are independent of SSH's shared
@@ -183,8 +185,34 @@ resolve and register in place. Quote paths containing spaces or shell characters
 Use an explicit server path such as `/absolute/server/folder`; unquoted `~` is
 expanded by your local shell before `ws` can validate it. Local `--path` retains
 relative-path and tilde expansion. Repository URLs and terminal commands are
-also interpreted on the selected server. To attach with tmux or herdr, run them
-on that server.
+also interpreted on the selected server. `ws attach` connects your current
+terminal to a session on the selected server.
+
+### Attach to a terminal
+
+```sh
+ws term open demo --name sh1
+ws attach demo sh1
+ws attach demo a1 --on example-alias
+```
+
+Attach first checks through the API that the named terminal exists and is
+`running`; an unavailable daemon, unknown terminal or non-running terminal
+produces a clear error and exit code 1. Local attach runs
+`tmux -u attach-session -t =ws-<workspace>-<name>`, adding `-S <socket>` when
+`WSD_TMUX_SOCKET` is set, just as wsd does. Use the same socket setting as wsd.
+
+Remote attach checks through the existing SSH API tunnel, closes it, then runs
+`ssh -t <host> sudo -n -u ws -H tmux -u attach-session -t =ws-<workspace>-<name>`.
+The SSH login must be allowed to run tmux as the daemon's `ws` account without a
+sudo password; sudo failures appear directly in the terminal. This uses the
+remote `ws` account's default tmux socket; a local `WSD_TMUX_SOCKET` is not sent.
+
+The child inherits the real terminal for input, resizing and UTF-8 colours.
+`TMUX` is removed from its environment so attach also works inside another tmux.
+Detach with tmux's prefix then `d` (normally Ctrl-b, then d), or close the window;
+the session and its process keep running. The CLI returns tmux's or SSH's exit
+code and does not accept `--json`.
 
 Remote behavior is covered by isolated fake-SSH tests and has been verified on
 a real Linux VPS, including cloning, in-place registration and terminal access.
