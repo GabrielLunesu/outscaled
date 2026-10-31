@@ -274,6 +274,8 @@ Everything an agent needs to start: the decisions, the repo layout, and a done-w
 | Agent hooks | Passed at launch (`claude --settings`, `codex -c notify=…`); never written into workspaces or global agent configs |
 | Agent MCP tools | `ws mcp`, a stdio MCP server that talks to the wsd API |
 | Run logs | In wsd's state folder (`logs/<workspace>/<agent>/<run>.log`), never inside the workspace |
+| Pane attach | Grid panes run `ws attach <workspace> <name> [--on <server>]`: `tmux attach` locally, `ssh -t <host> sudo -n -u ws tmux attach` on a VPS |
+| Workspace roots | Mac workspaces open as local `file://` folders (native git, search and language servers); VPS workspaces as `ws://<server>/<workspace>`, served by wsd |
 
 **Repo layout (the VS Code fork is the root)**
 
