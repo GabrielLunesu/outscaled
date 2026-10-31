@@ -307,6 +307,61 @@ The API serves `GET /v1/workspaces/:ws/runs` as a JSON array (newest first) and
 `GET /v1/runs/:id/log` as plain text. Unknown workspaces, unknown runs and missing
 log files return 404.
 
+## Workspace files
+
+The Phase 3 client's explorer and editor use `GET` and `PUT /v1/fs/:ws/<path>`
+for VPS workspaces over the existing SSH tunnel. Local Mac workspaces use native
+`file://` access. This API has no CLI command. Cloned workspaces and folders
+registered in place with `ws new --path` behave identically.
+
+Paths are relative to the workspace folder, with each segment URL-encoded.
+An empty path addresses the workspace root (with or without a trailing `/`).
+
+| Request | Result |
+| --- | --- |
+| `GET /v1/fs/demo/?op=stat` | `{type: "file" \| "directory", symlink, size, mtimeMs, ctimeMs}`; symlink metadata describes its target |
+| `GET /v1/fs/demo/?op=list` | `[{name, type: "file" \| "directory" \| "unknown", symlink}]`, sorted by name |
+| `GET /v1/fs/demo/src/main.ts?op=read` | File bytes streamed as `application/octet-stream`; `read` is the default operation |
+| `PUT /v1/fs/demo/src/main.ts?create=true&overwrite=true` | Replace the file's full contents with the raw request body; success returns 204 |
+
+Both write flags default to `true` and accept only `true` or `false`, following
+VS Code's `FileSystemProvider.writeFile` options. `create=false` requires an
+existing file; `overwrite=false` refuses an existing file. Parent directories
+must already exist. An empty body writes an empty file.
+
+Each existing path component is resolved with `realpath` and checked against the
+workspace's real folder. Contained symlinks work for stat, list, read and write;
+outside symlinks cannot be followed. For a new write, the deepest existing parent
+must be contained. Listings include outside-pointing and dangling symlinks as
+`{name, type: "unknown", symlink: true}`; the client maps `unknown` to VS Code's
+`FileType.Unknown`. Stat, read and write through an outside target return 403
+`forbidden`; dangling links return 404 `not_found`, even for writes with
+`create=true`.
+
+Bun 1.3.14 normalizes literal and encoded dot segments before exposing the
+request URL: for example, `folder/../file` arrives as `file`. This is accepted:
+all paths still resolve within the selected workspace's real folder, or fail
+with an error. The route decodes each exposed segment once and rejects `.`,
+`..`, decoded slashes or backslashes, and NUL bytes. Absolute paths and malformed
+encodings are also invalid. In particular, encoded separators such as `%2e%2e%2f` return
+400 `invalid_request` instead of becoming traversal after decoding.
+
+Failures use `{error: {code, message}}` for mapping to VS Code's `FileSystemError`:
+
+| Code | HTTP status | Meaning |
+| --- | --- | --- |
+| `not_found` | 404 | Unknown workspace, missing file or missing parent |
+| `exists` | 409 | Existing file with `overwrite=false` |
+| `is_directory` | 400 | Reading or writing a directory as a file |
+| `not_directory` | 400 | Listing a file or traversing a non-directory |
+| `forbidden` | 403 | Outside symlink, filesystem permission denial or unsupported file type |
+| `invalid_request` | 400 | Invalid path, operation or write flags |
+
+The protocol package exports `FsStat`, `FsEntry`, `FsList`, `FsOperation` and
+`FsWriteOptions`. This API writes only at the client's explicit request. wsd's
+own configuration and logs still stay outside workspace folders; delete, rename,
+mkdir and watch are not implemented.
+
 ## Configuration
 
 Configuration is read from `config.toml` inside the config directory:

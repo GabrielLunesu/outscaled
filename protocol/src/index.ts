@@ -37,6 +37,25 @@ export const CreateWorkspaceRequest = z.object({
 });
 export type CreateWorkspaceRequest = z.infer<typeof CreateWorkspaceRequest>;
 
+export const FsType = z.enum(["file", "directory", "unknown"]);
+export const FsStat = z.object({
+  type: FsType,
+  symlink: z.boolean(),
+  size: count,
+  mtimeMs: z.number(),
+  ctimeMs: z.number(),
+});
+export type FsStat = z.infer<typeof FsStat>;
+export const FsEntry = z.object({ name: z.string().min(1), type: FsType, symlink: z.boolean() });
+export type FsEntry = z.infer<typeof FsEntry>;
+export const FsList = z.array(FsEntry);
+export const FsOperation = z.enum(["stat", "list", "read"]).default("read");
+export const FsWriteOptions = z.object({
+  create: z.boolean().default(true),
+  overwrite: z.boolean().default(true),
+});
+export type FsWriteOptions = z.infer<typeof FsWriteOptions>;
+
 export const TerminalState = z.enum(["running", "restarting", "exited", "crashed"]);
 export type TerminalState = z.infer<typeof TerminalState>;
 export const TerminalRuntime = z.enum(["claude-code", "codex"]);

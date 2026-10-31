@@ -6,6 +6,7 @@ import { createHooksRoute } from "./routes/hooks";
 import { createTerminalsRoute } from "./routes/terminals";
 import { createWorkspacesRoute } from "./routes/workspaces";
 import { createRunsRoute } from "./routes/runs";
+import { createFsRoute } from "./routes/fs";
 import { Schedules, type SchedulesOptions } from "./schedules";
 import { State } from "./state";
 import { Stream, type StreamOptions } from "./stream";
@@ -25,7 +26,7 @@ export async function startServer(config: Config, supervisorOptions?: Supervisor
     const context: RouteContext = { config, state, terminals };
     const schedules = new Schedules(state, config.stateDir, schedulesOptions);
     const health = createHealthRoute(context);
-    const routes = [health, createWorkspacesRoute(context), createTerminalsRoute(context), createHooksRoute(context), createRunsRoute(context)];
+    const routes = [health, createWorkspacesRoute(context), createTerminalsRoute(context), createHooksRoute(context), createRunsRoute(context), createFsRoute(context)];
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: config.port,
