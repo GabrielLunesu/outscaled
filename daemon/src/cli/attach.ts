@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { Slug, Terminal } from "@outscaled/protocol";
+import { shellQuote } from "../terminals";
 import { createClient, serverOptions } from "./client";
 
 export async function attach(args: string[]): Promise<number> {
@@ -29,8 +30,9 @@ export async function attach(args: string[]): Promise<number> {
   const env = { ...process.env };
   // Allow attaching from an outer tmux client without its nesting/socket hints.
   delete env.TMUX;
+  // SSH joins remote argv for the login shell; quote even tmux's =target.
   const child = Bun.spawn(values.on === "local" ? command
-    : ["ssh", "-t", values.on, "sudo", "-n", "-u", "ws", "-H", ...command], {
+    : ["ssh", "-t", values.on, ...["sudo", "-n", "-u", "ws", "-H", ...command].map(shellQuote)], {
     env, stdin: "inherit", stdout: "inherit", stderr: "inherit",
   });
   return await child.exited;

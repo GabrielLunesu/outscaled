@@ -12,19 +12,27 @@ let env: NodeJS.ProcessEnv;
 let terminals: Terminal[];
 let requests: string[];
 let log: string;
+let remoteLog: string;
+let sudoLog: string;
 
-function attachments(): { argv: string[]; tmux: string | null }[] {
-  return existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line)) : [];
+function attachments(path = log): { argv: string[]; tmux: string | null }[] {
+  return existsSync(path) ? readFileSync(path, "utf8").trim().split("\n").map(line => JSON.parse(line)) : [];
 }
 
 beforeEach(() => {
   f = fixture();
   ssh = fakeSsh(f.root);
   log = join(f.root, "attach.jsonl");
+  remoteLog = join(f.root, "remote-attach.jsonl");
+  sudoLog = join(f.root, "sudo.jsonl");
+  const zsh = Bun.which("zsh");
+  if (!zsh) throw new Error("Attach shell regression test requires zsh");
   // Only these fakes are on PATH, so neither real SSH nor tmux can run.
-  const fake = `
+  const record = `
 require("node:fs").appendFileSync(process.env.WS_TEST_ATTACH_LOG,
   JSON.stringify({argv: process.argv.slice(2), tmux: process.env.TMUX ?? null}) + "\\n");
+`;
+  const fake = `${record}
 if (process.env.WS_TEST_ATTACH_ECHO) {
   process.stdout.write(await new Response(Bun.stdin.stream()).text());
 }
@@ -32,9 +40,24 @@ process.stderr.write(process.env.WS_TEST_ATTACH_ERROR ?? "");
 process.exit(Number(process.env.WS_TEST_ATTACH_EXIT ?? 0));
 `;
   writeFileSync(join(ssh.env.PATH, "tmux"), `#!${process.execPath}\n${fake}`, { mode: 0o755 });
+  writeFileSync(join(ssh.env.PATH, "sudo"), `#!${process.execPath}
+require("node:fs").appendFileSync(process.env.WS_TEST_SUDO_LOG, JSON.stringify(process.argv.slice(2)) + "\\n");
+const child = Bun.spawn(process.argv.slice(6), { stdin: "inherit", stdout: "inherit", stderr: "inherit" });
+process.exit(await child.exited);
+`, { mode: 0o755 });
   const sshFile = join(ssh.env.PATH, "ssh");
   const tunnel = readFileSync(sshFile, "utf8").split("\n").slice(1).join("\n");
-  writeFileSync(sshFile, `#!${process.execPath}\nif (process.argv[2] === "-t") { ${fake} }\n${tunnel}`);
+  writeFileSync(sshFile, `#!${process.execPath}
+if (process.argv[2] === "-t") {
+  ${record}
+  // OpenSSH joins remote argv with spaces before passing it to the login shell.
+  const child = Bun.spawn([${JSON.stringify(zsh)}, "-c", process.argv.slice(4).join(" ")], {
+    env: { ...process.env, WS_TEST_ATTACH_LOG: process.env.WS_TEST_REMOTE_LOG },
+    stdin: "inherit", stdout: "inherit", stderr: "inherit",
+  });
+  process.exit(await child.exited);
+}
+${tunnel}`);
   terminals = [{ ...terminal, name: "a1", session: "ws-demo-a1" }];
   requests = [];
   server = Bun.serve({
@@ -47,7 +70,8 @@ process.exit(Number(process.env.WS_TEST_ATTACH_EXIT ?? 0));
       return Response.json({ error: { code: "not_found", message: "Workspace not found" } }, { status: 404 });
     },
   });
-  env = { ...f.env, ...ssh.env, WSD_PORT: String(server.port), WS_TEST_ATTACH_LOG: log, TMUX: "/outer/socket,123,0" };
+  env = { ...f.env, ...ssh.env, WSD_PORT: String(server.port), WS_TEST_ATTACH_LOG: log,
+    WS_TEST_REMOTE_LOG: remoteLog, WS_TEST_SUDO_LOG: sudoLog, TMUX: "/outer/socket,123,0" };
 });
 
 afterEach(async () => {
@@ -114,13 +138,18 @@ test("unreachable daemon fails clearly without starting tmux", async () => {
   expect(attachments()).toEqual([]);
 });
 
-test("remote attach checks via SSH, then passes the exact interactive SSH argv and exit code", async () => {
+test("remote attach quotes exact SSH argv for zsh and preserves tmux's literal target and exit code", async () => {
   expect(await execute(["demo", "a1", "--on", "user@example.invalid"], {
     WS_TEST_ATTACH_EXIT: "37", WS_TEST_ATTACH_ERROR: "sudo: a password is required\n",
   })).toEqual({ code: 37, stdout: "", stderr: "sudo: a password is required\n" });
   expect(attachments()).toEqual([{
-    argv: ["-t", "user@example.invalid", "sudo", "-n", "-u", "ws", "-H", "tmux", "-u", "attach-session", "-t", "=ws-demo-a1"],
+    argv: ["-t", "user@example.invalid", "'sudo'", "'-n'", "'-u'", "'ws'", "'-H'", "'tmux'", "'-u'", "'attach-session'", "'-t'", "'=ws-demo-a1'"],
     tmux: null,
+  }]);
+  expect(JSON.parse(readFileSync(sudoLog, "utf8")))
+    .toEqual(["-n", "-u", "ws", "-H", "tmux", "-u", "attach-session", "-t", "=ws-demo-a1"]);
+  expect(attachments(remoteLog)).toEqual([{
+    argv: ["-u", "attach-session", "-t", "=ws-demo-a1"], tmux: null,
   }]);
   expect(ssh.invocations()).toHaveLength(1);
   expect(ssh.invocations()[0]!.argv.at(-1)).toBe("user@example.invalid");
