@@ -98,7 +98,7 @@ On macOS, install Xcode's Command Line Tools and the Node.js version in `.nvmrc`
 ```sh
 scripts/serial.sh npm install
 scripts/serial.sh npm run compile
-scripts/serial.sh ./scripts/code.sh /path/to/folder
+./scripts/code.sh /path/to/folder   # not through serial.sh: it would hold the build lock while the app is open
 ```
 
 The first launch downloads the development Electron runtime if needed. The built-in Outscaled extension activates on startup; click **Outscaled** in the activity bar to see **Workspaces** and “No servers are connected yet.” No daemon connection is needed for this scaffold. Its build bundles the shared schemas directly from `protocol/src/index.ts` with zod; there is no separate protocol build. For extension-only changes after the initial client build, run `scripts/serial.sh npm run gulp compile-extension:outscaled`.
