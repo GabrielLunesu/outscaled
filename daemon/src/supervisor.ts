@@ -70,7 +70,7 @@ export class Supervisor {
 
   private async poll(): Promise<void> {
     if (this.stopped) return;
-    const terminals = this.state.listTerminals().filter(t => (t.alwaysOn || t.runtime) && t.state !== "crashed");
+    const terminals = this.state.listTerminals().filter(t => t.state !== "crashed");
     const ids = new Set(terminals.map(t => t.id));
     for (const id of this.watches.keys()) if (!ids.has(id)) this.watches.delete(id);
     for (const id of this.outputWatches.keys()) if (!ids.has(id)) this.outputWatches.delete(id);

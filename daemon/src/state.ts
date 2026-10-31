@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { Event, Run, Schedule, Terminal, TerminalStatus, Workspace } from "@outscaled/protocol";
+import { Event, Run, Schedule, Terminal, TerminalStatus, Workspace, type StreamMessage } from "@outscaled/protocol";
 import { migrate } from "./migrations";
 
 type WorkspaceRow = Omit<Workspace, "inPlace"> & { inPlace: number };
@@ -13,8 +13,9 @@ const eventFromRow = (row: EventRow): Event => ({ ...row, payload: JSON.parse(ro
 
 export class State {
   readonly db: Database;
+  private closed = false;
 
-  constructor(path: string) {
+  constructor(path: string, private readonly publish?: (message: StreamMessage) => void) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path, { create: true, strict: true });
     try {
@@ -27,12 +28,23 @@ export class State {
     }
   }
 
-  close(): void { this.db.close(); }
+  close(): void { this.closed = true; this.db.close(); }
+
+  // Callers also use outer SQLite transactions. Defer until their synchronous
+  // commit, and discard notifications for writes that rolled back.
+  private announce(message: StreamMessage, persisted: () => boolean): void {
+    if (!this.publish) return;
+    const committed = !this.db.inTransaction;
+    queueMicrotask(() => {
+      if (!this.closed && (committed || persisted())) this.publish!(message);
+    });
+  }
 
   insertWorkspace(value: Workspace): Workspace {
     const ws = Workspace.parse(value);
     this.db.query("INSERT INTO workspaces (slug, path, repo, inPlace, createdAt) VALUES (?, ?, ?, ?, ?)")
       .run(ws.slug, ws.path, ws.repo, Number(ws.inPlace), ws.createdAt);
+    this.announce({ type: "workspace.changed", workspace: ws.slug }, () => this.getWorkspace(ws.slug) !== null);
     return ws;
   }
 
@@ -62,6 +74,7 @@ export class State {
       t.id, t.workspace, t.name, t.command, t.session, Number(t.alwaysOn), t.state, t.restarts, t.pid, t.createdAt,
       t.runtime, t.status, t.statusChangedAt,
     );
+    this.announce({ type: "workspace.changed", workspace: t.workspace }, () => this.getTerminal(t.id) !== null);
     return t;
   }
 
@@ -83,6 +96,12 @@ export class State {
     const next = Terminal.parse({ ...current, ...changes });
     this.db.query("UPDATE terminals SET state = ?, pid = ?, restarts = ? WHERE id = ?")
       .run(next.state, next.pid, next.restarts, id);
+    if (current.state !== next.state || current.pid !== next.pid || current.restarts !== next.restarts) {
+      this.announce({ type: "workspace.changed", workspace: next.workspace }, () => {
+        const stored = this.getTerminal(id);
+        return stored?.state === next.state && stored.pid === next.pid && stored.restarts === next.restarts;
+      });
+    }
     return next;
   }
 
@@ -115,6 +134,7 @@ export class State {
     const event = Event.parse(value);
     this.db.query("INSERT INTO events (id, type, workspace, terminal, payload, time, acked) VALUES (?, ?, ?, ?, ?, ?, ?)")
       .run(event.id, event.type, event.workspace, event.terminal, JSON.stringify(event.payload), event.time, Number(event.acked));
+    this.announce(event, () => this.getEvent(event.id) !== null);
     return event;
   }
 
