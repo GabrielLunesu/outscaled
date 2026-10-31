@@ -24,7 +24,8 @@
 	"scripts": {
 		"compile": "gulp compile-extension:outscaled",
 		"watch": "gulp watch-extension:outscaled",
-		"typecheck": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json --noEmit"
+		"typecheck": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json --noEmit",
+		"test": "node test/run.mjs"
 	},
 	"contributes": {
 		"viewsContainers": {
@@ -47,11 +48,33 @@
 		"viewsWelcome": [
 			{
 				"view": "outscaled.workspaces",
-				"contents": "%workspaces.welcome%"
+				"contents": "%workspaces.welcome%",
+				"when": "!outscaled.hasWorkspaces"
 			}
-		]
+		],
+		"commands": [
+			{
+				"command": "outscaled.workspaces.refresh",
+				"title": "%workspaces.refresh%",
+				"icon": "$(refresh)"
+			}
+		],
+		"menus": {
+			"view/title": [
+				{
+					"command": "outscaled.workspaces.refresh",
+					"when": "view == outscaled.workspaces",
+					"group": "navigation"
+				}
+			]
+		}
 	},
 	"dependencies": {
+		"smol-toml": "^1.9.1",
+		"ws": "^8.22.1",
 		"zod": "^4.1.12"
+	},
+	"devDependencies": {
+		"@types/ws": "^8.18.2"
 	}
 }
