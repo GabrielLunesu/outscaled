@@ -205,9 +205,14 @@ for (const dieWhileDown of [false, true]) {
 test("shutdown cancels a pending restart and leaves the retained session alone", async () => {
   await start({ backoffMs: [1000] });
   const terminal = await open();
+  const [before] = await tmux.listPanes();
   process.kill(terminal.pid!, "SIGKILL");
   await eventually(() => app!.state.getTerminal(terminal.id)!.state === "restarting");
+  expect(app!.state.getTerminal(terminal.id)!.restarts).toBe(0);
   await stop();
   await Bun.sleep(1600);
-  expect((await tmux.listPanes())[0]).toMatchObject({ name: terminal.session, pid: terminal.pid, dead: true });
+  expect(await tmux.hasSession(terminal.session)).toBe(true);
+  expect(await tmux.listPanes()).toEqual([
+    expect.objectContaining({ name: terminal.session, pane: before!.pane, dead: true }),
+  ]);
 });
