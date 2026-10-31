@@ -94,6 +94,43 @@ retain their last status. Every status change emits `terminal.status`.
 The hook command is local-only and takes no `--on` or `--json` options. It does
 nothing outside wsd terminals and gives up after about a second if wsd is down.
 
+## Live updates
+
+`GET /v1/stream` upgrades to one broadcast WebSocket on the same loopback
+listener as the HTTP API. Remote clients use an SSH tunnel to port 7770.
+An ordinary HTTP GET returns 400 with a `websocket_required` error.
+
+Each text frame contains one JSON object validated by the protocol package's
+`StreamMessage` schema:
+
+| Type | Message |
+| --- | --- |
+| `terminal.status`, `agent.needs_input`, `agent.crashed`, `run.started`, `run.finished` | The stored `Event` object, including `id`, `workspace`, `terminal`, `payload`, `time` and `acked`; sent after persistence commits |
+| `workspace.changed` | `{type: "workspace.changed", workspace: "demo"}` when a workspace is created, a terminal opens, or a terminal's process state changes (including shell exits and agent restarts) |
+| `server.health` | `{type: "server.health", payload: <Health>}` every 15 seconds, using the same body as `GET /v1/health` |
+
+The last two types are live-only and never enter the events table. On
+`workspace.changed`, refetch that workspace's terminals (and the workspace list
+if the slug is new). Connect the socket before fetching current state over HTTP,
+and reconcile notifications received during that fetch. Repeat this on reconnect:
+the stream has no snapshot, replay, cursor, subscriptions or client commands.
+
+```ts
+import { StreamMessage } from "@outscaled/protocol";
+
+const stream = new WebSocket("ws://127.0.0.1:7770/v1/stream");
+stream.onmessage = event => {
+  const message = StreamMessage.parse(JSON.parse(String(event.data)));
+  console.log(message);
+};
+```
+
+Broadcasts never wait for clients. A backed-up or failed send drops that socket;
+other clients continue receiving events. Closed sockets are removed, idle
+connections use WebSocket pings, and shutdown closes every connected socket.
+On Bun 1.3.14, shutdown bounds the wait for Bun's stale WebSocket counter after
+a server-side close ([upstream issue](https://github.com/oven-sh/bun/issues/36223)).
+
 ## Agent terminal tools over MCP
 
 Point Claude Code or another MCP client at the compiled `ws` executable:

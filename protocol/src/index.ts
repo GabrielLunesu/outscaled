@@ -124,6 +124,13 @@ export const Event = z.object({
 });
 export type Event = z.infer<typeof Event>;
 
+// Stored events retain their HTTP/SQLite shape. These two notifications are
+// live-only: clients fetch current state over HTTP on connection or reconnect.
+export const WorkspaceChanged = z.object({ type: z.literal("workspace.changed"), workspace: Slug });
+export const ServerHealth = z.object({ type: z.literal("server.health"), payload: Health });
+export const StreamMessage = z.union([Event, WorkspaceChanged, ServerHealth]);
+export type StreamMessage = z.infer<typeof StreamMessage>;
+
 export const ScheduleInterval = z.string().regex(/^[1-9]\d*[smhd]$/).refine(value => {
   const ms = Number(value.slice(0, -1)) * ({ s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[value.at(-1)!] ?? 0);
   return Number.isSafeInteger(ms) && ms <= 8_640_000_000_000_000 - Date.now();
