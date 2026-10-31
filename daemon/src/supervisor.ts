@@ -88,9 +88,10 @@ export class Supervisor {
   private async inspect(terminal: Terminal, pane: TmuxPane): Promise<void> {
     const now = Date.now();
     let watch = this.watches.get(terminal.id);
-    if (!watch || watch.pid !== pane.pid) {
+    if (!watch || (!pane.dead && watch.pid !== pane.pid)) {
       // Start a fresh observation window on adoption. The persisted total
       // restart count says nothing about this process's recent failures.
+      // Dead panes still belong to the current watch; tmux may report pid 0.
       watch = { pid: pane.pid, startedAt: now, restart: false, failures: 0, retryAt: null };
       this.watches.set(terminal.id, watch);
     }
