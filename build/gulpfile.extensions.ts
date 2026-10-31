@@ -235,6 +235,18 @@ export function createExtensionTasks(tsconfigFile: string, repoRoot = root) {
 
 const tasks = compilations.map(tsconfigFile => createExtensionTasks(tsconfigFile));
 
+// Outscaled bundles protocol/ and zod in development as well as in packaged builds.
+const buildOutscaled = (isWatch: boolean) => ext.esbuildExtensions('outscaled', isWatch, [{ script: path.join(root, 'extensions/outscaled/esbuild.mts') }]);
+const outscaledTasks = {
+	transpileTask: task.define('transpile-extension:outscaled', () => buildOutscaled(false)),
+	compileTask: task.define('compile-extension:outscaled', () => buildOutscaled(false)),
+	watchTask: task.define('watch-extension:outscaled', () => buildOutscaled(true)),
+};
+for (const extensionTask of Object.values(outscaledTasks)) {
+	task.task(extensionTask);
+}
+tasks.push(outscaledTasks);
+
 const transpileExtensionsTask = task.define('transpile-extensions', task.parallel(...tasks.map(t => t.transpileTask)));
 task.task(transpileExtensionsTask);
 

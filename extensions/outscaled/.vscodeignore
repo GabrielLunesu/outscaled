@@ -1,0 +1,5 @@
+src/**
+tsconfig*.json
+**/*.tsbuildinfo
+esbuild*.mts
+package-lock.json

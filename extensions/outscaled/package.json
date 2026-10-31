@@ -1,0 +1,57 @@
+{
+	"name": "outscaled",
+	"displayName": "%displayName%",
+	"description": "%description%",
+	"version": "0.0.1",
+	"publisher": "vscode",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.143.0"
+	},
+	"activationEvents": [
+		"onStartupFinished"
+	],
+	"extensionKind": [
+		"ui"
+	],
+	"capabilities": {
+		"virtualWorkspaces": true,
+		"untrustedWorkspaces": {
+			"supported": true
+		}
+	},
+	"main": "./dist/extension.js",
+	"scripts": {
+		"compile": "gulp compile-extension:outscaled",
+		"watch": "gulp watch-extension:outscaled",
+		"typecheck": "node ../../node_modules/@typescript/native/bin/tsc --project tsconfig.json --noEmit"
+	},
+	"contributes": {
+		"viewsContainers": {
+			"activitybar": [
+				{
+					"id": "outscaled",
+					"title": "%container.title%",
+					"icon": "$(server-environment)"
+				}
+			]
+		},
+		"views": {
+			"outscaled": [
+				{
+					"id": "outscaled.workspaces",
+					"name": "%workspaces.title%"
+				}
+			]
+		},
+		"viewsWelcome": [
+			{
+				"view": "outscaled.workspaces",
+				"contents": "%workspaces.welcome%"
+			}
+		]
+	},
+	"dependencies": {
+		"zod": "^4.1.12"
+	}
+}
