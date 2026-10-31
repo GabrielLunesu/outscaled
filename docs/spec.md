@@ -122,17 +122,17 @@ A **terminal** is one pane in a workspace's grid, backed by a tmux session the d
 /etc/wsd/config.toml          # server name, tailnet bind, notify targets
 /etc/wsd/presets.toml         # grid layouts and launch presets
 /var/lib/wsd/state.db         # SQLite: workspaces, agents, schedules, runs, events
+/var/lib/wsd/logs/<slug>/<agent>/<run>.log   # one log per scheduled or one-off run
 /workspaces/<slug>/           # the repo or folder agents work in
 /workspaces/<slug>/.ws/
     workspace.toml            # agents, schedules, browser profile
     prompts/<name>.md         # prompts for scheduled agents
-    logs/<agent>/<run>.log    # git-ignored
 /workspaces/.trash/           # soft-deleted workspaces
 ```
 
-On the Mac, `wsd` runs as you and the root volume is read-only, so the defaults move to your home folder: workspaces in `~/workspaces/`, config in `~/.config/wsd/`, state in `~/.local/share/wsd/state.db`. On any machine, `workspaces_dir` in `config.toml` overrides where new clones go.
+On the Mac, `wsd` runs as you and the root volume is read-only, so the defaults move to your home folder: workspaces in `~/workspaces/`, config in `~/.config/wsd/`, state in `~/.local/share/wsd/state.db` and run logs in `~/.local/share/wsd/logs/`. On any machine, `workspaces_dir` in `config.toml` overrides where new clones go.
 
-Config lives inside the workspace, so it travels with the repo:
+Config lives inside the workspace, so it travels with the repo. `wsd` only reads it: it never writes into a workspace, so folders registered in place stay clean.
 
 ```toml
 [[agent]]
@@ -186,8 +186,8 @@ Agents come in three modes, and every mode reports "needs you" through the same 
 
 **Needs-me detection**
 
-- **Claude Code:** `wsd` writes hooks into the workspace's `.claude/settings.json`. The Notification hook (waiting for permission or input) calls `ws hook needs_input`; the Stop hook calls `ws hook finished`.
-- **Codex:** `notify = ["ws", "hook", "codex"]` in the Codex config; Codex calls it with a JSON payload when a turn completes.
+- **Claude Code:** `wsd` starts Claude with its hooks passed at launch (`claude --settings <file>`), so nothing is written into the workspace. Its hooks call `ws hook claude-code`: a prompt or tool use means `working`, a permission prompt means `needs_input`, and the end of a turn means `idle`.
+- **Codex:** `wsd` starts Codex with `-c notify=["ws", "hook", "codex"]`, leaving the global Codex config alone; Codex calls it with a JSON payload when a turn completes (`idle`), and new pane output means `working`.
 - **Scripts:** a non-zero exit fires `run.finished` with an error; a script can also call `ws notify "<message>"`.
 - **Fallback:** a pane with no output for N minutes while its process is alive fires a low-priority "possibly stuck" event.
 
@@ -270,6 +270,10 @@ Everything an agent needs to start: the decisions, the repo layout, and a done-w
 | Client | Fork of microsoft/vscode at the repo root; features in a built-in extension, core changes only for workspace switching and live tab status |
 | Remote access | SSH tunnels opened by the client |
 | CLI server target | `--on local` or an SSH host/alias from `~/.ssh/config`; server details stay outside the repo |
+| Server list | `~/.config/outscaled/servers.toml` lists the SSH hosts that `ws status` covers; `local` is always included |
+| Agent hooks | Passed at launch (`claude --settings`, `codex -c notify=…`); never written into workspaces or global agent configs |
+| Agent MCP tools | `ws mcp`, a stdio MCP server that talks to the wsd API |
+| Run logs | In wsd's state folder (`logs/<workspace>/<agent>/<run>.log`), never inside the workspace |
 
 **Repo layout (the VS Code fork is the root)**
 
