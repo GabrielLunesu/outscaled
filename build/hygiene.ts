@@ -161,9 +161,12 @@ export function hygiene(some: NodeJS.ReadWriteStream | string[] | undefined, run
 
 	const copyrights = es.through(function (file: VinylFileWithLines) {
 		const lines = file.__lines;
+		const expectedHeader = file.relative.replace(/\\/g, '/').startsWith('extensions/outscaled/')
+			? copyrightHeaderLines.map(line => line.replace('Microsoft Corporation', 'Gabriel Lunesu'))
+			: copyrightHeaderLines;
 
-		for (let i = 0; i < copyrightHeaderLines.length; i++) {
-			if (lines[i] !== copyrightHeaderLines[i]) {
+		for (let i = 0; i < expectedHeader.length; i++) {
+			if (lines[i] !== expectedHeader[i]) {
 				console.error(file.relative + ': Missing or bad copyright statement');
 				errorCount++;
 				break;

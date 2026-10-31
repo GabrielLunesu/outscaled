@@ -1,0 +1,7 @@
+{
+	"displayName": "Outscaled",
+	"description": "Workspaces and agent terminals on machines you own.",
+	"container.title": "Outscaled",
+	"workspaces.title": "Workspaces",
+	"workspaces.welcome": "No servers are connected yet."
+}

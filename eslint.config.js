@@ -151,6 +151,17 @@ export default defineConfig(
 			]
 		},
 	},
+	{
+		files: ['extensions/outscaled/**'],
+		rules: {
+			'header/header': [2, 'block', [
+				'---------------------------------------------------------------------------------------------',
+				' *  Copyright (c) Gabriel Lunesu. All rights reserved.',
+				' *  Licensed under the MIT License. See License.txt in the project root for license information.',
+				' *--------------------------------------------------------------------------------------------'
+			]],
+		},
+	},
 	// Production filesystem operations must not block the event loop.
 	{
 		files: [

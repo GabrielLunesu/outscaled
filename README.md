@@ -91,6 +91,18 @@ tmux attach -t ws-demo-a1
 
 On macOS, new workspaces go in `~/workspaces/` unless configured otherwise. The startup wrapper waits at most about 40 seconds; a failed wait may leave the daemon running, so inspect the log before retrying. Agent commands such as `claude` must already be available. Commands and settings are in [daemon/README.md](daemon/README.md).
 
+### Client
+
+On macOS, install Xcode's Command Line Tools and the Node.js version in `.nvmrc` (for example, `nvm install && nvm use`). From the repo root, install and compile the client, then open a folder:
+
+```sh
+scripts/serial.sh npm install
+scripts/serial.sh npm run compile
+scripts/serial.sh ./scripts/code.sh /path/to/folder
+```
+
+The first launch downloads the development Electron runtime if needed. The built-in Outscaled extension activates on startup; click **Outscaled** in the activity bar to see **Workspaces** and “No servers are connected yet.” No daemon connection is needed for this scaffold. Its build bundles the shared schemas directly from `protocol/src/index.ts` with zod; there is no separate protocol build. For extension-only changes after the initial client build, run `scripts/serial.sh npm run gulp compile-extension:outscaled`.
+
 ## License
 
 MIT, like VS Code itself. See [LICENSE.txt](LICENSE.txt).
