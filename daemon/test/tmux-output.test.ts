@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, expect, jest, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TerminalStatus } from "@outscaled/protocol";
@@ -11,7 +11,6 @@ import { fixture, terminal, workspace } from "./helpers";
 let f: ReturnType<typeof fixture>;
 let state: State;
 let supervisor: Supervisor | undefined;
-let restoreClock: (() => void) | undefined;
 
 beforeEach(() => {
   f = fixture();
@@ -22,8 +21,7 @@ beforeEach(() => {
 afterEach(async () => {
   await supervisor?.stop();
   supervisor = undefined;
-  restoreClock?.();
-  restoreClock = undefined;
+  jest.useRealTimers();
   state.close();
   f.cleanup();
 });
@@ -60,6 +58,7 @@ console.log(${JSON.stringify(output)});
 });
 
 function observe(panes: TmuxPane[], status: TerminalStatus = "starting") {
+  jest.useFakeTimers({ now: 10_900 });
   const tmux = new Tmux(f.env.WSD_TMUX_SOCKET);
   let polls = 0;
   // No tmux process or real agent: feed the supervisor per-pane format results.
@@ -71,23 +70,21 @@ function observe(panes: TmuxPane[], status: TerminalStatus = "starting") {
     });
     state.updateTerminalStatus(`codex-${index}`, status);
   }
-  let now = 10_900;
-  const clock = spyOn(Date, "now").mockImplementation(() => now);
-  restoreClock = () => clock.mockRestore();
   const terminals = new Terminals(state, tmux);
   supervisor = new Supervisor(state, tmux, terminals);
   supervisor.start();
   return {
     async sample(time: number) {
-      now = time;
       const previous = polls;
-      const deadline = performance.now() + 2000;
-      while (polls === previous && performance.now() < deadline) await Bun.sleep(10);
-      expect(polls).toBeGreaterThan(previous);
+      // Queue one poll, then set its observation time before it runs under the
+      // lifecycle lock. Neither polling nor second boundaries use real time.
+      jest.advanceTimersToNextTimer();
+      jest.setSystemTime(time);
       // Wait for that poll's status writes to finish under the lifecycle lock.
       await terminals.serial(async () => {});
+      expect(polls).toBe(previous + 1);
     },
-    notify(time: number) { now = time; terminals.codexTurnComplete("codex-0"); },
+    notify(time: number) { jest.setSystemTime(time); terminals.codexTurnComplete("codex-0"); },
     status(index = 0) { return state.getTerminal(`codex-${index}`)!.status; },
   };
 }
@@ -134,7 +131,7 @@ test("activity fallback settles startup and absorbs notify redraws across second
   expect(watch.status()).toBe("working");
   expect(state.listEvents().filter(event => event.type === "terminal.status").map(event => (event.payload as {newStatus: string}).newStatus))
     .toEqual(["starting", "idle", "working", "idle", "working"]);
-}, 15000);
+});
 
 test("generation takes precedence, including zero, while another pane falls back to activity", async () => {
   const modern = { ...pane(), outputGeneration: 0 };
