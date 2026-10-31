@@ -21,7 +21,8 @@ import { connect, createServer } from "node:net";
 const argv = process.argv.slice(2);
 const forward = argv[argv.indexOf("-L") + 1];
 const [unix, port] = forward.split(":127.0.0.1:");
-const mode = process.env.WS_TEST_SSH_MODE;
+const host = JSON.parse(process.env.WS_TEST_SSH_HOSTS ?? "{}")[argv.at(-1)];
+const mode = host?.mode ?? process.env.WS_TEST_SSH_MODE;
 let proxy;
 if (mode === "proxy" || mode === "dead-proxy") {
   proxy = Bun.spawn([process.execPath, "-e", 'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000)'], { stdin: "ignore", stdout: "ignore", stderr: "inherit" });
@@ -37,7 +38,7 @@ if (mode === "stall") { setInterval(() => {}, 1000); }
 else {
   await Bun.sleep(Number(process.env.WS_TEST_SSH_DELAY ?? 0));
   createServer(socket => {
-    const remote = connect({ host: "127.0.0.1", port: Number(port) });
+    const remote = connect({ host: "127.0.0.1", port: Number(host?.port ?? port) });
     socket.pipe(remote).pipe(socket);
     socket.on("error", () => remote.destroy());
     remote.on("error", () => socket.destroy());

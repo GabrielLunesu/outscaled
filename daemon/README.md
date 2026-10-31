@@ -32,6 +32,7 @@ in that startup wrapper and use `bun src/ws.ts health` from `daemon/`.
 | Command | Does |
 | --- | --- |
 | `ws health` | CPU, RAM, disk and terminal counts |
+| `ws status [--json]` | Every terminal on every configured server, with server, workspace, name, process state and agent status (`-` when absent) |
 | `ws new <slug>` | Empty workspace in the workspaces folder |
 | `ws new <slug> --repo <url>` | Clone a repo into a new workspace |
 | `ws new <slug> --path <dir>` | Register an existing folder in place; nothing is copied, moved or written |
@@ -42,6 +43,24 @@ in that startup wrapper and use `bun src/ws.ts health` from `daemon/`.
 
 The health, new and term commands take `--json` for raw output and `--on <server>`.
 The default is `local`, which connects directly to the local daemon.
+
+`ws status` always queries `local` first, then the SSH hosts listed in
+`~/.config/outscaled/servers.toml`, in file order:
+
+```toml
+[[server]]
+host = "example-alias"
+```
+
+Set `OUTSCALED_CONFIG_DIR` to override that directory. A missing file means local
+only; duplicate hosts, an explicit `local`, and invalid SSH targets are errors.
+Status takes no `--on` option. It queries servers in parallel using the existing
+10-second SSH startup and 3-second HTTP timeouts. Text output has aligned columns
+and omits empty servers; failures name the server on stderr. JSON output is an
+array of `{server, terminals}` or `{server, error}` entries, including empty
+servers. Either mode exits 1 if any server fails, after reporting the available
+results. `GET /v1/terminals` supplies each server's terminals across workspaces,
+sorted by workspace and name, with the same session freshness as `ws term ls`.
 
 Claude commands (including an absolute path to `claude`) launch with a wsd-owned
 `claude-settings.json` in the state directory. Its hooks call the CLI by absolute
