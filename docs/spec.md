@@ -300,7 +300,7 @@ scripts/serial.sh                    one build or full test suite at a time
 
 - [x] A Claude Code terminal shows `working` within 1 s of a prompt, `idle` at turn end, and `needs_input` on a permission prompt.
 - [x] A Codex terminal shows `working` on output and `idle` on notify.
-- [ ] `ws status` lists every terminal on every server with its state.
+- [x] `ws status` lists every terminal on every server with its state.
 - [ ] From inside Claude Code, the MCP tools open two Codex terminals, send each a prompt, wait for idle and read their output.
 - [ ] A schedule with `every = "10m"` runs a headless prompt and stores its log.
 
