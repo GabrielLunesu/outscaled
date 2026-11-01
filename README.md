@@ -6,7 +6,7 @@ It's a personal build, published as source: no installers, no releases.
 
 ## What works today
 
-The daemon (phases 1 and 2) runs on macOS and Linux, built from source. `wsd` listens on loopback and `ws` is its CLI.
+Phases 1 and 2 (the daemon) run on macOS and Linux, and phase 3 (the VS Code fork) runs on macOS, all built from source. `wsd` listens on loopback and `ws` is its CLI; the fork is a client of every `wsd` you list.
 
 **Workspaces and terminals**
 
@@ -24,11 +24,20 @@ The daemon (phases 1 and 2) runs on macOS and Linux, built from source. `wsd` li
 - `ws mcp` gives agents MCP tools to open terminals, send them prompts, wait for them to go idle and read their output, so one Claude Code session can run several Codex agents.
 - Scheduled agents in a workspace's `.ws/workspace.toml` (for example `every = "10m"`) run a headless prompt on time; `ws run ls` and `ws run log` show each run and its log.
 
-[Linux VPS setup](daemon/systemd/README.md) covers cross-compilation, deployment and systemd operation. All commands are in [daemon/README.md](daemon/README.md).
+**The app (VS Code fork)**
+
+- An **Outscaled** sidebar lists the workspaces on your Mac and each VPS, grouped by server, with every terminal's status dot and a "need you" count, updating live.
+- Clicking a workspace switches the explorer and editors to it without reloading the window. Mac workspaces open as normal folders; VPS workspaces are served by their `wsd`, so you can browse and edit them from the Mac.
+- **Outscaled: Open Grid…** opens launch presets such as "2 Claude + 2 Codex" as a grid of editor-area terminals, each attached to a `wsd` tmux session (`ws attach`). Tab icons follow live status: grey idle, green working, red needs you, red cross crashed.
+- Each workspace remembers its grid; switching back, or reloading, restores it on the same sessions.
+- A terminal that needs you (or crashes) bounces the Dock icon and shows an in-app notification with a **Focus** button. The app also sends a macOS notification, but macOS only displays it for a signed build; see below.
+- The default colour theme is Carbon Candy Matrix Cyber, from [Carbon Candy](https://github.com/viral-team/carbon-candy-theme) (MIT).
+
+[Linux VPS setup](daemon/systemd/README.md) covers cross-compilation, deployment and systemd operation. All commands are in [daemon/README.md](daemon/README.md); the app's features are in [extensions/outscaled/README.md](extensions/outscaled/README.md).
 
 ## What's next
 
-Next is **Phase 3: the client fork**, after Phase 2 is reviewed in daily use: the workspace sidebar with live status dots, switching between Mac and VPS workspaces without reloading, terminal grids from launch presets, and live tab colours and notifications. Phase 4 adds the VPS desktop and browser.
+Phase 3 has one item left: clickable macOS notifications need the app signed with an Apple development certificate, because macOS refuses notification permission to the unsigned dev build. After Phase 3 is reviewed in daily use, **Phase 4** adds a desktop and a logged-in Chrome on each VPS, shared by agents and you.
 
 The full plan, with a checklist per phase, is in [docs/spec.md](docs/spec.md).
 
@@ -101,7 +110,7 @@ scripts/serial.sh npm run compile
 ./scripts/code.sh /path/to/folder   # not through serial.sh: it would hold the build lock while the app is open
 ```
 
-The first launch downloads the development Electron runtime if needed. The built-in Outscaled extension activates on startup; click **Outscaled** in the activity bar to see **Workspaces** and “No servers are connected yet.” No daemon connection is needed for this scaffold. Its build bundles the shared schemas directly from `protocol/src/index.ts` with zod; there is no separate protocol build. For extension-only changes after the initial client build, run `scripts/serial.sh npm run gulp compile-extension:outscaled`.
+The first launch downloads the development Electron runtime if needed. Click **Outscaled** in the activity bar to see your workspaces; the first time you pick one, the window reloads once into a dedicated Outscaled workspace (saved as `~/.config/outscaled/outscaled.code-workspace`). It connects to the local `wsd` and to the SSH hosts in `~/.config/outscaled/servers.toml`. Its build bundles the shared schemas directly from `protocol/src/index.ts` with zod; there is no separate protocol build. For extension-only changes after the initial client build, run `scripts/serial.sh npm run gulp compile-extension:outscaled`.
 
 ## License
 
