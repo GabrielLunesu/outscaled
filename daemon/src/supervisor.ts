@@ -21,6 +21,10 @@ interface OutputWatch {
   generation: number | null;
   activity: number;
   lastOutputAt: number;
+  attachedClients: number;
+  width: number;
+  height: number;
+  redrawGraceUntil: number;
 }
 
 export class Supervisor {
@@ -105,9 +109,20 @@ export class Supervisor {
     const outputAt = pane.outputGeneration === null ? Math.max(now, (pane.windowActivity + 1) * 1000) : now;
     let watch = this.outputWatches.get(terminal.id);
     if (!watch || watch.pid !== pane.pid) {
-      watch = { pid: pane.pid, generation: pane.outputGeneration, activity: pane.windowActivity, lastOutputAt: outputAt };
+      watch = {
+        pid: pane.pid, generation: pane.outputGeneration, activity: pane.windowActivity, lastOutputAt: outputAt,
+        attachedClients: pane.attachedClients, width: pane.width, height: pane.height, redrawGraceUntil: 0,
+      };
       this.outputWatches.set(terminal.id, watch);
     }
+    if (watch.attachedClients !== pane.attachedClients || watch.width !== pane.width || watch.height !== pane.height) {
+      // Attaching, detaching and resizing clients can make idle Codex redraw.
+      // Renew only on a layout/client change, so sustained output still works.
+      watch.redrawGraceUntil = now + 1000;
+    }
+    watch.attachedClients = pane.attachedClients;
+    watch.width = pane.width;
+    watch.height = pane.height;
     const output = pane.outputGeneration === null
       ? watch.activity !== pane.windowActivity
       : watch.generation !== pane.outputGeneration;
@@ -118,7 +133,8 @@ export class Supervisor {
     }
     if (terminal.status === "starting") {
       if (now - watch.lastOutputAt >= 2000) this.state.updateTerminalStatus(terminal.id, "idle");
-    } else if (terminal.status === "idle" && output && !this.terminals.codexInNotifyGrace(terminal, now)) {
+    } else if (terminal.status === "idle" && output && now >= watch.redrawGraceUntil &&
+        !this.terminals.codexInNotifyGrace(terminal, now)) {
       this.state.updateTerminalStatus(terminal.id, "working");
     }
   }
