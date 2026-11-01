@@ -10,6 +10,7 @@ import { WorkspaceSelection } from '../workspaces/selection';
 import { WorkspaceLocation } from '../workspaces/uri';
 import { workspaceKey } from '../workspaces/editorMemory';
 import { ensureTerminal, listTerminals } from './daemonTerminals';
+import { detachPanes } from './detach';
 import { GridMemory, gridMemoryKey, RememberedGrid, RememberedPane, recordGrid, restorePlan } from './memory';
 import { EditorGroupLayout, expandPreset, GridPane, presets } from './presets';
 import { TabStatusChanges } from './status';
@@ -211,11 +212,8 @@ export class TerminalGrid implements vscode.Disposable {
 
 	private async detach(): Promise<void> {
 		const panes = [...this.panes];
-		const tabs = panes.flatMap(pane => pane.tab ? [pane.tab] : []).filter(tab => vscode.window.tabGroups.all.some(group => group.tabs.includes(tab)));
 		for (const pane of panes) this.remove(pane);
-		// Await tab removal so empty-group collapse finishes before the next layout.
-		if (tabs.length) await vscode.window.tabGroups.close(tabs, true);
-		for (const pane of panes) pane.terminal.dispose();
+		await detachPanes(panes, vscode.window.tabGroups, this.log);
 	}
 
 	private async restore(workspace: WorkspaceLocation): Promise<void> {

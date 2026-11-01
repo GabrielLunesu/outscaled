@@ -64,9 +64,12 @@ snapshot. Group/tab events capture changes, with a deduplicated local layout
 poll to catch sash resizes and a final flush on extension deactivation.
 
 Before a root switch, the extension snapshots and closes the outgoing workspace's
-attach clients. After switching it sets the remembered layout and reattaches the
-incoming panes before reopening file editors. The same selected grid restores
-automatically after a window reload, from workspace state in that Outscaled
+attach clients through `Terminal.dispose()`, bypassing editor-terminal kill
+confirmations without changing `terminal.integrated.confirmOnKill`. It waits for
+their tabs to disappear before setting the next layout. If tab removal stalls
+for three seconds, it logs an error and continues the switch. After switching it
+sets the remembered layout and reattaches the incoming panes before reopening
+file editors. The same selected grid restores automatically after a window reload, from workspace state in that Outscaled
 window. No core grid patch or window/extension-host reload is needed for switches.
 Restore only lists daemon terminals and attaches running original ids; missing,
 exited, crashed, restarting or replaced terminals are omitted, leaving any empty
@@ -107,7 +110,11 @@ between a local 2×2 agent grid and a remote side-by-side Claude/shell grid,
 verifies a typed marker and the same daemon identities after restoration, proves
 renderer/extension-host/tunnel survival, then reloads and checks the selected
 grid restores automatically. It also verifies manual cross-group moves, closed
-panes and omission of an exited daemon terminal. Fake Claude and Codex executables print recognisable output and wait; attach clients use the
-built `daemon/dist/ws`. Screenshots, `switch-proof.json` and grid proof records
-go to `.agent-validation/grid` (or the first argument). Processes and temporary
+panes and omission of an exited daemon terminal. The harness retains the default
+`confirmOnKill` setting, waits for VS Code to detect every attach client's child
+process, verifies live child PIDs before switches, and fails if detach requests a
+native termination confirmation. Explicit user closes are confirmed by the
+test-only native-dialog observer. Fake Claude and Codex executables print
+recognisable output and wait; attach clients use the built `daemon/dist/ws`.
+Screenshots, `switch-proof.json` and grid proof records go to `.agent-validation/grid` (or the first argument). Processes and temporary
 state are cleaned up on success and failure.

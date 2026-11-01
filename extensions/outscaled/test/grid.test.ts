@@ -9,6 +9,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Terminal } from '@outscaled/protocol';
+import { EventEmitter } from 'vscode';
+import { detachPanes } from '../src/grid/detach';
 import { layouts, presets, expandPreset, EditorGroupLayout } from '../src/grid/presets';
 import { ensureTerminal } from '../src/grid/daemonTerminals';
 import { findWsPath, attachArgs, attachEnv } from '../src/grid/wsPath';
@@ -190,4 +192,78 @@ test('recorded grids survive JSON persistence including resized nested layout, m
 	assert.deepEqual(restored.recall(workspace), JSON.parse(JSON.stringify(grid)));
 	assert.deepEqual(restored.recall({ ...workspace, host: 'remote' })!.panes, []);
 	assert.equal(restored.recall({ ...workspace, slug: 'unknown' }), undefined);
+});
+
+
+function detachTabs(tabs: object[]) {
+	const changes = new EventEmitter<void>();
+	const groupChanges = new EventEmitter<void>();
+	let listeners = 0;
+	const listen = (emitter: EventEmitter<void>, listener: () => void) => {
+		listeners++;
+		const subscription = emitter.event(listener);
+		return { dispose() { listeners--; subscription.dispose(); } };
+	};
+	const groups = { all: [{ tabs }],
+		onDidChangeTabs: (listener: () => void) => listen(changes, listener),
+		onDidChangeTabGroups: (listener: () => void) => listen(groupChanges, listener) };
+	return { groups, changes, groupChanges, listeners: () => listeners };
+}
+
+test('detach disposes every client before waiting for async tab removal and leaves unrelated tabs alone', async () => {
+	const a = {}, b = {}, unrelated = {};
+	const fixture = detachTabs([a, b, unrelated]);
+	const disposed: object[] = [];
+	const messages: string[] = [];
+	let settled = false;
+	const detached = detachPanes([a, b].map(tab => ({ tab, terminal: { dispose() { disposed.push(tab); } } })),
+		fixture.groups, message => messages.push(message)).then(() => { settled = true; });
+	assert.deepEqual(disposed, [a, b]);
+	await Promise.resolve(); assert.equal(settled, false);
+	fixture.groups.all[0].tabs = [b, unrelated]; fixture.changes.fire();
+	await Promise.resolve(); assert.equal(settled, false);
+	fixture.groups.all = [{ tabs: [unrelated] }]; fixture.groupChanges.fire();
+	await detached;
+	assert.deepEqual(messages, []); assert.equal(fixture.listeners(), 0);
+	assert.deepEqual(fixture.groups.all[0].tabs, [unrelated]);
+});
+
+test('detach handles already absent and synchronously removed tabs without missing events', async () => {
+	const tab = {}, absent = {};
+	const fixture = detachTabs([tab]);
+	let disposed = 0;
+	await detachPanes([
+		{ tab, terminal: { dispose() { disposed++; fixture.groups.all[0].tabs = []; fixture.changes.fire(); } } },
+		{ tab: absent, terminal: { dispose() { disposed++; } } },
+		{ terminal: { dispose() { disposed++; } } }
+	], fixture.groups, () => assert.fail('no detach errors expected'));
+	assert.equal(disposed, 3); assert.equal(fixture.listeners(), 0);
+});
+
+test('detach timeout logs and releases the switch queue; late events cannot block later detaches', async () => {
+	const tab = {};
+	const fixture = detachTabs([tab]);
+	const messages: string[] = [];
+	const order: string[] = [];
+	await detachPanes([{ tab, terminal: { dispose() { order.push('dispose'); } } }], fixture.groups,
+		message => messages.push(message), 20).then(() => { order.push('next switch'); });
+	assert.deepEqual(order, ['dispose', 'next switch']);
+	assert.match(messages[0], /Error: Terminal grid detach timed out.*1 tabs remain.*continuing workspace switch/);
+	assert.equal(messages.length, 1); assert.equal(fixture.listeners(), 0);
+	fixture.changes.fire(); fixture.groupChanges.fire();
+	await detachPanes([{ tab, terminal: { dispose() { fixture.groups.all[0].tabs = []; fixture.changes.fire(); } } }],
+		fixture.groups, message => messages.push(message));
+	assert.equal(messages.length, 1); assert.equal(fixture.listeners(), 0);
+});
+
+test('a broken terminal disposal does not prevent disposing the other clients or releasing the queue', async () => {
+	const fixture = detachTabs([]);
+	const messages: string[] = [];
+	let disposed = false;
+	await detachPanes([
+		{ terminal: { dispose() { throw new Error('client failed'); } } },
+		{ terminal: { dispose() { disposed = true; } } }
+	], fixture.groups, message => messages.push(message));
+	assert.equal(disposed, true); assert.match(messages[0], /Error: Could not dispose terminal client.*client failed/);
+	assert.equal(fixture.listeners(), 0);
 });
