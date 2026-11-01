@@ -3,6 +3,8 @@ import type { State } from "./state";
 import type { Terminals } from "./terminals";
 import type { Tmux, TmuxPane } from "./tmux";
 
+const CODEX_WORKING_OUTPUT_OBSERVATIONS = 3;
+
 export interface SupervisorOptions {
   backoffMs?: readonly number[];
   healthyUptimeMs?: number;
@@ -21,6 +23,11 @@ interface OutputWatch {
   generation: number | null;
   activity: number;
   lastOutputAt: number;
+  attachedClients: number;
+  width: number;
+  height: number;
+  redrawGraceUntil: number;
+  outputStreak: number;
 }
 
 export class Supervisor {
@@ -104,21 +111,55 @@ export class Supervisor {
     // its full timestamp bucket before counting two seconds of startup silence.
     const outputAt = pane.outputGeneration === null ? Math.max(now, (pane.windowActivity + 1) * 1000) : now;
     let watch = this.outputWatches.get(terminal.id);
+    const hasBaseline = watch?.pid === pane.pid;
     if (!watch || watch.pid !== pane.pid) {
-      watch = { pid: pane.pid, generation: pane.outputGeneration, activity: pane.windowActivity, lastOutputAt: outputAt };
+      watch = {
+        pid: pane.pid, generation: pane.outputGeneration, activity: pane.windowActivity, lastOutputAt: outputAt,
+        attachedClients: pane.attachedClients, width: pane.width, height: pane.height, redrawGraceUntil: 0, outputStreak: 0,
+      };
       this.outputWatches.set(terminal.id, watch);
     }
+    if (watch.attachedClients !== pane.attachedClients || watch.width !== pane.width || watch.height !== pane.height) {
+      // Attaching, detaching and resizing clients can make idle Codex redraw.
+      // Renew only on a layout/client change, so sustained output still works.
+      watch.redrawGraceUntil = now + 1000;
+    }
+    watch.attachedClients = pane.attachedClients;
+    watch.width = pane.width;
+    watch.height = pane.height;
     const output = pane.outputGeneration === null
       ? watch.activity !== pane.windowActivity
       : watch.generation !== pane.outputGeneration;
+    const previousActivity = watch.activity;
     watch.generation = pane.outputGeneration;
     watch.activity = pane.windowActivity;
     if (output) {
       watch.lastOutputAt = outputAt;
     }
+    // The first observation is only a baseline, not evidence of silence. With
+    // activity timestamps, silence is only certain once their second ends.
+    const quiet = hasBaseline && !output &&
+      (pane.outputGeneration !== null || now >= (pane.windowActivity + 1) * 1000);
+    const notifyGrace = this.terminals.codexInNotifyGrace(terminal, now, quiet);
+    const canStartWork = terminal.status === "idle" && now >= watch.redrawGraceUntil && !notifyGrace;
+    // Sporadic redraws (including late MCP/plugin output and brief typing) are
+    // not turns. Require consecutive output observations outside either grace.
+    if (!canStartWork) {
+      watch.outputStreak = 0;
+    } else if (pane.outputGeneration !== null) {
+      watch.outputStreak = output ? watch.outputStreak + 1 : 0;
+    } else if (output) {
+      // Older tmux only proves activity once per second. Count consecutive
+      // activity seconds, not repeated reads of the same timestamp as output.
+      watch.outputStreak = pane.windowActivity === previousActivity + 1 ? watch.outputStreak + 1 : 1;
+    } else if (now >= (pane.windowActivity + 1) * 1000) {
+      // An unchanged timestamp within its current bucket is inconclusive;
+      // once the bucket ends, a poll without a new timestamp breaks the streak.
+      watch.outputStreak = 0;
+    }
     if (terminal.status === "starting") {
       if (now - watch.lastOutputAt >= 2000) this.state.updateTerminalStatus(terminal.id, "idle");
-    } else if (terminal.status === "idle" && output && !this.terminals.codexInNotifyGrace(terminal, now)) {
+    } else if (watch.outputStreak >= CODEX_WORKING_OUTPUT_OBSERVATIONS) {
       this.state.updateTerminalStatus(terminal.id, "working");
     }
   }

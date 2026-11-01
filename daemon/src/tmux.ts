@@ -11,6 +11,9 @@ export interface TmuxPane extends TmuxSession {
   diedAt: number | null;
   outputGeneration: number | null;
   windowActivity: number;
+  attachedClients: number;
+  width: number;
+  height: number;
 }
 
 class TmuxError extends Error {
@@ -115,13 +118,13 @@ export class Tmux {
     let output: string;
     try {
       output = await this.run(["list-panes", "-a", "-F",
-        "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_dead_signal}\t#{pane_dead_time}\t#{pane_output_generation}\t#{window_activity}"]);
+        "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{pane_dead}\t#{pane_dead_status}\t#{pane_dead_signal}\t#{pane_dead_time}\t#{pane_output_generation}\t#{window_activity}\t#{session_attached}\t#{pane_width}\t#{pane_height}"]);
     } catch (error) {
       if (noServer(error)) return [];
       throw error;
     }
     return output ? output.split("\n").map(line => {
-      const [name, pid, pane, dead, status, signal, time, generation, activity] = line.split("\t");
+      const [name, pid, pane, dead, status, signal, time, generation, activity, attached, width, height] = line.split("\t");
       return {
         name: name!, pid: Number(pid), pane: pane!, dead: dead === "1",
         exitStatus: status ? Number(status) : null, exitSignal: signal || null,
@@ -130,6 +133,7 @@ export class Tmux {
         // zero is a valid generation, while older tmux needs window activity.
         outputGeneration: generation ? Number(generation) : null,
         windowActivity: Number(activity || 0),
+        attachedClients: Number(attached), width: Number(width), height: Number(height),
       };
     }) : [];
   }
