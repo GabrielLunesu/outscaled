@@ -5,7 +5,11 @@
 
 import * as vscode from 'vscode';
 import { registerWorkspacesView } from './workspaces/view';
+import { DaemonService } from './daemon/service';
 
 export function activate(context: vscode.ExtensionContext): void {
-	registerWorkspacesView(context);
+	const output = vscode.window.createOutputChannel('Outscaled');
+	const daemons = new DaemonService(message => output.appendLine(message));
+	context.subscriptions.push(output, daemons);
+	registerWorkspacesView(context, daemons);
 }
