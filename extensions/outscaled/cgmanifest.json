@@ -1,0 +1,17 @@
+{
+	"registrations": [
+		{
+			"component": {
+				"type": "git",
+				"git": {
+					"name": "carbon-candy-theme",
+					"repositoryUrl": "https://github.com/viral-team/carbon-candy-theme",
+					"commitHash": "0793a0766d658923681c662bbc4c49c873113623"
+				}
+			},
+			"description": "Carbon Candy Matrix Cyber colour theme, copied unchanged from themes/carbon-candy-matrix-neon-blur.json. MIT licence in themes/LICENSE-carbon-candy.txt.",
+			"version": "0.2.17"
+		}
+	],
+	"version": 1
+}
