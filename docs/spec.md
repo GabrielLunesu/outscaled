@@ -214,6 +214,7 @@ The client is a direct fork of microsoft/vscode (Code-OSS) at the repo root, so 
 | Switch workspace in one window | Multi-root window over `ws://<server>/<workspace>`; switching changes which root and which terminals show | Yes: hide other workspaces' terminals and restore each grid |
 | Terminal grid and launch presets | Editor-area terminals placed with the editor layout command (2×2 and others), each attached to a daemon tmux session | No |
 | Live status on terminal tabs | Extensions can set a terminal's icon and colour only at creation, so live changes need core | Yes |
+| Needs-you notifications | OS toast through VS Code's own toast service; clicking it focuses that terminal. Extensions can't show clickable OS notifications | Yes |
 | Agent dashboard | Webview over every daemon's events | No |
 | PC panel | Webview embedding the server's Selkies URL | No |
 | Branding, onboarding, add-server flow | Later; v1 is a personal build | Yes |

@@ -11,7 +11,7 @@ Outscaled is a fork of microsoft/vscode at the repo root. Our own code lives in 
 - `daemon/`: `wsd` and the `ws` CLI (Bun, TypeScript)
 - `protocol/`: shared API and event types (zod schemas)
 - `extensions/outscaled/`: the built-in extension (sidebar, grid, presets, PC panel)
-- `src/vs/workbench/contrib/outscaled/`: core VS Code changes, only for workspace switching and live tab status
+- `src/vs/workbench/contrib/outscaled/`: core VS Code changes, only for workspace switching, live tab status and needs-you notifications
 - `desktop/`: VPS desktop setup and Chrome launcher
 
 Keep changes inside these folders so upstream merges stay easy. When you do touch VS Code's own code, follow [.github/copilot-instructions.md](.github/copilot-instructions.md).
