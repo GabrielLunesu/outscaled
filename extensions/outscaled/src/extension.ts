@@ -4,6 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
+import { TerminalGrid } from './grid/controller';
 import { registerWorkspacesView } from './workspaces/view';
 import { DaemonService } from './daemon/service';
 import { WorkspaceFileSystem } from './workspaces/fileSystem';
@@ -17,4 +18,5 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(files, vscode.workspace.registerFileSystemProvider('ws', files, { isCaseSensitive: true }));
 	const selection = registerWorkspaceSwitching(context, daemons, message => output.appendLine(message));
 	registerWorkspacesView(context, daemons, selection);
+	context.subscriptions.push(new TerminalGrid(context, daemons, selection, message => output.appendLine(message)));
 }
