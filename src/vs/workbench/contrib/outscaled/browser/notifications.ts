@@ -21,12 +21,15 @@ interface INotifyResult {
 	readonly clicked: boolean;
 }
 
-/** Shows a needs-you toast and returns its outcome after handling a click. */
+/** Requests background attention, shows a needs-you toast and handles its click. */
 export async function showNotification(hostService: IHostService, terminalService: ITerminalService, request: unknown): Promise<INotifyResult> {
 	if (!isNotifyRequest(request)) {
 		return { shown: false, clicked: false };
 	}
 	const { id, title, body, processId } = request;
+	if (!hostService.hasFocus) {
+		await hostService.focus(mainWindow, { mode: FocusMode.Notify });
+	}
 	// The host owns the native toast id; our stable id prevents duplicate live toasts.
 	const result = await hostService.showToast({ dedupeKey: id, title, body }, CancellationToken.None);
 	const shown = result.supported && !result.suppressed;

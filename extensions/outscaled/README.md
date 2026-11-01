@@ -83,6 +83,12 @@ working agents show a green spinner, idle agents and shells a grey dot,
 permission/input requests a red dot, and crashed terminals a red cross. Exited
 terminals show idle. No extra stream or SSH tunnel is opened for status.
 
+## Needs-you notifications (Phase 3, item 6)
+
+Real transitions into needs-input or crashed send an OS toast and an in-app warning or error with the same title and text and a **Focus** button. Both follow `outscaled.notifications.enabled` and are suppressed when the window is focused and that pane is visible. Startup and reconnect snapshots establish silent baselines. Each transition produces one in-app message, even while an earlier OS toast is pending.
+
+When the window is in the background, core also requests attention through `FocusMode.Notify`: a Dock bounce and badge on macOS, or a frame flash elsewhere, without stealing focus. This runs alongside the OS toast because macOS can silently drop notifications from an ad-hoc signed dev build while Electron still reports success. Clicking the OS toast or **Focus** switches to the workspace and focuses or opens the terminal through the same routing path. Pending messages ignore clicks after disposal or removal of the terminal/server.
+
 ## Validation
 
 From the repository root, with existing dependencies and client output:
@@ -116,5 +122,5 @@ process, verifies live child PIDs before switches, and fails if detach requests 
 native termination confirmation. Explicit user closes are confirmed by the
 test-only native-dialog observer. Fake Claude and Codex executables print
 recognisable output and wait; attach clients use the built `daemon/dist/ws`.
-Screenshots, `switch-proof.json` and grid proof records go to `.agent-validation/grid` (or the first argument). Processes and temporary
+The notification scenarios first simulate an OS-toast click, then remove the test interception and exercise the real core command with workspace B selected and the workbench window blurred (disabling Playwright focus emulation so the host observes native focus). They assert an informational Dock bounce without stealing focus, one in-app warning with **Focus**, and restoration of workspace A with terminal keyboard focus after clicking it. Native OS-toast display and click delivery remain outside the hermetic check. Screenshots `26-fallback-background.png` and `27-fallback-focus-terminal.png` and `notification-fallback-proof.json` record this fallback. Screenshots, `switch-proof.json` and grid proof records go to `.agent-validation/grid` (or the first argument). Processes and temporary
 state are cleaned up on success and failure.

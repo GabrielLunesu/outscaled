@@ -146,7 +146,7 @@ const vscode = require('vscode');
 const fs = require('node:fs');
 exports.activate = context => {
   const read = () => { try { return JSON.parse(fs.readFileSync(${JSON.stringify(notificationControl)}, 'utf8')); } catch { return {}; } };
-  context.subscriptions.push(vscode.commands.registerCommand('_outscaled.notify', request => {
+  const interception = vscode.commands.registerCommand('_outscaled.notify', request => {
     fs.appendFileSync(${JSON.stringify(notificationLog)}, JSON.stringify(request) + '\\n');
     if (read().hold !== request.id) return { shown: false, clicked: false };
     return new Promise(resolve => {
@@ -155,7 +155,14 @@ exports.activate = context => {
       }, 50);
       context.subscriptions.push({ dispose: () => { clearInterval(timer); resolve({ shown: false, clicked: false }); } });
     });
-  }));
+  });
+  context.subscriptions.push(interception);
+  const timer = setInterval(() => {
+    if (!read().native) return;
+    interception.dispose(); clearInterval(timer);
+    fs.writeFileSync(${JSON.stringify(notificationReady)}, 'native');
+  }, 50);
+  context.subscriptions.push({ dispose: () => clearInterval(timer) });
   fs.writeFileSync(${JSON.stringify(notificationReady)}, 'ready');
 };
 `);
@@ -369,9 +376,10 @@ exports.activate = context => {
 			const { MenuRegistry, MenuId } = await import(base + 'vs/platform/actions/common/actions.js');
 			const { ITerminalService } = await import(base + 'vs/workbench/contrib/terminal/browser/terminal.js');
 			const { IConfigurationService } = await import(base + 'vs/platform/configuration/common/configuration.js');
+			const { IHostService } = await import(base + 'vs/workbench/services/host/browser/host.js');
 			const id = 'outscaled.test.inspectAttachClients';
 			CommandsRegistry.registerCommand(id, (accessor: any) => {
-				(window as any).__outscaledTerminalProbe = { service: accessor.get(ITerminalService), configuration: accessor.get(IConfigurationService) };
+				(window as any).__outscaledTerminalProbe = { service: accessor.get(ITerminalService), configuration: accessor.get(IConfigurationService), host: accessor.get(IHostService) };
 			});
 			MenuRegistry.appendMenuItem(MenuId.CommandPalette, { command: { id, title: 'Outscaled Test: Inspect Attach Clients' } });
 		}, pathToFileURL(join(root, 'out/')).href.replace('file://', 'vscode-file://vscode-app'));
@@ -617,6 +625,57 @@ exports.activate = context => {
 		notVerified: 'Native OS notification display, OS click delivery, and bringing a background window forward (probe replaces native command)' }, null, 2));
 	await capture('25-notification-click-focused');
 	console.log('PASS: permission hook dispatched correct notification id/title/body without stale processId; simulated click restored workspace grid and focused its terminal');
+	// Stop intercepting _outscaled.notify so this scenario exercises the real
+	// core command, native host focus and Dock path alongside the in-app message.
+	writeFileSync(notificationControl, JSON.stringify({ native: true }));
+	await until(() => readFileSync(notificationReady, 'utf8') === 'native', 'native command interception removed');
+	await request(0, 'hooks/claude-code', { terminal: claude.id, payload: { hook_event_name: 'Stop' } });
+	await until(async () => (await row('claude-1').first().innerText()).includes('idle'), 'fallback baseline idle');
+	await switchWorkspace('vps-demo');
+	await until(async () => (await paneNames()).join() === 'claude-1,shell-1', 'B selected before fallback');
+	await command('Notifications: Clear All Notifications');
+	await app.evaluate(({ app }: any) => {
+		const calls: string[] = [];
+		(globalThis as any).__outscaledDockBounces = calls;
+		const bounce = app.dock.bounce.bind(app.dock);
+		app.dock.bounce = (type: string) => { calls.push(type); return bounce(type); };
+	});
+	// Playwright enables focus emulation by default, which makes document.hasFocus()
+	// stay true even after a real BrowserWindow blur. Observe native focus here.
+	const focusSession = await win.context().newCDPSession(win);
+	await focusSession.send('Emulation.setFocusEmulationEnabled', { enabled: false });
+	const workbenchWindow = await app.browserWindow(win);
+	await workbenchWindow.evaluate((window: any) => window.blur());
+	writeFileSync(join(evidence, 'notification-window-proof.json'), JSON.stringify(await app.evaluate(({ BrowserWindow }: any) =>
+		BrowserWindow.getAllWindows().map((window: any) => ({ title: window.getTitle(), visible: window.isVisible(), focused: window.isFocused() }))), null, 2));
+	await until(async () => await win.evaluate(() => !(window as any).__outscaledTerminalProbe.host.hasFocus), 'host observes blurred window');
+	await request(0, 'hooks/claude-code', { terminal: claude.id, payload: { hook_event_name: 'Notification', notification_type: 'permission_prompt' } });
+	const fallback = win.locator('.notifications-toasts .notification-list-item').filter({ hasText: 'claude-1 · mac-demo · local: Needs your input' });
+	await fallback.getByRole('button', { name: 'Focus', exact: true }).waitFor();
+	await until(async () => (await app.evaluate(() => (globalThis as any).__outscaledDockBounces)).length > 0, 'real Notify focus bounces Dock');
+	const bounces = await app.evaluate(() => (globalThis as any).__outscaledDockBounces);
+	assert.deepEqual(bounces, ['informational']);
+	assert.equal(await fallback.count(), 1, 'one in-app message for the transition');
+	assert.equal(await win.evaluate(() => (window as any).__outscaledTerminalProbe.host.hasFocus), false, 'Notify does not steal focus');
+	await selected('vps-demo');
+	await until(async () => fallback.evaluate((item: Element) => {
+		const style = getComputedStyle(item.closest('.notification-toast')!);
+		return style.opacity === '1' && style.transform === 'none';
+	}), 'in-app toast entrance animation settled');
+	await capture('26-fallback-background');
+	await fallback.getByRole('button', { name: 'Focus', exact: true }).click();
+	await selected('mac-demo');
+	await until(async () => (await paneNames()).join() === 'claude-1,codex-1', 'fallback Focus restores A grid');
+	await until(async () => await win.locator('.editor-group-container.active .tabs-container .tab.active').filter({ hasText: 'claude-1' }).count() === 1,
+		'fallback Focus activates claude-1 pane');
+	await until(async () => await win.evaluate(() => !!document.activeElement?.closest('.terminal-wrapper')), 'fallback terminal keyboard focus');
+	writeFileSync(join(evidence, 'notification-fallback-proof.json'), JSON.stringify({ bounces, selectedBefore: 'vps-demo', selectedAfter: 'mac-demo',
+		activeElement: await win.evaluate(() => ({ tag: document.activeElement?.tagName, className: document.activeElement?.className })), groups: await gridProof(),
+		verified: 'Permission hook with window blurred and A detached -> real _outscaled.notify -> informational Dock bounce without stealing focus + one in-app warning -> Focus restores A and terminal keyboard focus',
+		notVerified: 'Native OS toast display or OS click delivery (macOS may drop the ad-hoc signed dev app toast)' }, null, 2));
+	await capture('27-fallback-focus-terminal');
+	await focusSession.detach();
+	console.log('PASS: real core Notify focus bounced Dock without stealing focus; in-app Focus restored workspace A and focused its terminal');
 	await assertNoUnexpectedConfirmations();
 	writeFileSync(join(evidence, 'detach-dialog-proof.json'), JSON.stringify(await confirmations(), null, 2));
 	const logs: string[] = [];

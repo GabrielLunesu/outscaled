@@ -17,16 +17,20 @@ const terminal = () => Terminal.parse({ id: 'agent-id', workspace: 'demo', name:
 function fixture() {
 	const changes = new EventEmitter<void>();
 	const servers: ServerState[] = ['local', 'example-alias'].map(host => ({ host, online: true, workspaces: [], terminals: [terminal()] }));
+	const messages: { request: unknown; kind: string }[] = [];
 	const requests: any[] = [], focused: any[] = [], errors: string[] = [];
 	let enabled = true, windowFocused = false, visible = false;
 	let result: PromiseLike<{ shown: boolean; clicked: boolean }> = Promise.resolve({ shown: true, clicked: false });
+	let messageResult: PromiseLike<boolean> = Promise.resolve(false);
 	const service = { servers, onDidChange: changes.event };
 	const host = { enabled: () => enabled, focused: () => windowFocused,
 		pane: () => ({ visible, processId: 1234 }),
 		notify: (request: unknown) => { requests.push(request); return result; },
+		message: (request: unknown, kind: string) => { messages.push({ request, kind }); return messageResult; },
 		focus: async (...args: unknown[]) => { focused.push(args); }, log: (message: string) => errors.push(message) };
-	return { service, host, requests, focused, errors, fire: () => changes.fire(),
+	return { service, host, requests, messages, focused, errors, fire: () => changes.fire(),
 		set enabled(value: boolean) { enabled = value; }, set windowFocused(value: boolean) { windowFocused = value; },
+		set messageResult(value: typeof messageResult) { messageResult = value; },
 		set visible(value: boolean) { visible = value; }, set result(value: typeof result) { result = value; } };
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
@@ -34,7 +38,7 @@ const settle = () => new Promise(resolve => setImmediate(resolve));
 test('notify on transitions across servers, once per entry, with stable per-terminal/kind ids', async () => {
 	const f = fixture(), notifications = new TerminalNotifications(f.service, f.host);
 	const [local, remote] = f.service.servers;
-	assert.equal(f.requests.length, 0);
+	assert.equal(f.requests.length, 0); assert.equal(f.messages.length, 0);
 	local.terminals[0].status = 'needs_input'; f.fire(); f.fire();
 	assert.equal(f.requests.length, 1);
 	assert.deepEqual(f.requests[0], { id: 'outscaled:["local","agent-id","needs_input"]', title: 'claude-1 · demo · local', body: 'Needs your input', processId: 1234 });
@@ -51,6 +55,7 @@ test('notify on transitions across servers, once per entry, with stable per-term
 	assert.equal(f.requests.length, 5);
 	assert.equal(f.requests[4].title, 'claude-1 · demo · example-alias');
 	assert.notEqual(f.requests[4].id, f.requests[0].id);
+	assert.deepEqual(f.messages, f.requests.map(request => ({ request, kind: request.body === 'Crashed' ? 'crashed' : 'needs_input' })));
 	await settle(); assert.deepEqual(f.errors, []); notifications.dispose();
 });
 
@@ -60,14 +65,14 @@ test('startup, reconnect, added-server snapshots and offline mutations establish
 		const server = f.service.servers[0], agent = server.terminals[0];
 		if (kind === 'crashed') agent.state = kind; else agent.status = kind;
 		const notifications = new TerminalNotifications(f.service, f.host);
-		f.fire(); assert.equal(f.requests.length, 0);
+		f.fire(); assert.equal(f.requests.length, 0); assert.equal(f.messages.length, 0);
 		server.online = false; f.fire();
 		agent.state = 'running'; agent.status = 'idle'; f.fire();
 		if (kind === 'crashed') agent.state = kind; else agent.status = kind;
 		server.online = true; f.fire(); f.fire();
-		assert.equal(f.requests.length, 0);
+		assert.equal(f.requests.length, 0); assert.equal(f.messages.length, 0);
 		f.service.servers.push({ ...server, host: 'another-example' }); f.fire();
-		assert.equal(f.requests.length, 0);
+		assert.equal(f.requests.length, 0); assert.equal(f.messages.length, 0);
 		agent.state = 'running'; agent.status = 'idle'; f.fire();
 		if (kind === 'crashed') agent.state = kind; else agent.status = kind;
 		f.fire(); assert.equal(f.requests.length, 2);
@@ -81,8 +86,10 @@ test('suppress only when focused AND visible; disabled or suppressed transitions
 		const notifications = new TerminalNotifications(f.service, f.host);
 		f.service.servers[0].terminals[0].status = 'needs_input'; f.fire();
 		assert.equal(f.requests.length, enabled && !(focused && visible) ? 1 : 0);
+		assert.equal(f.messages.length, f.requests.length);
 		f.enabled = true; f.windowFocused = false; f.fire();
 		assert.equal(f.requests.length, enabled && !(focused && visible) ? 1 : 0);
+		assert.equal(f.messages.length, f.requests.length);
 		notifications.dispose();
 	}
 });
@@ -109,21 +116,38 @@ test('pending toasts do not block each other; only clicks route; stale/disposed 
 	resolve({ shown: true, clicked: true }); await settle();
 	assert.deepEqual(f.focused, [[{ host: 'local', slug: 'demo' }, 'claude-1'], [{ host: 'example-alias', slug: 'demo' }, 'claude-1']]);
 	notifications.dispose();
-	for (const stale of ['removed', 'disposed', 'dismissed', 'error']) {
+	for (const surface of ['toast', 'message']) for (const stale of ['removed', 'offline', 'disposed', 'dismissed', 'error']) {
 		const f = fixture(); let resolve!: (value: any) => void, reject!: (error: Error) => void;
-		f.result = new Promise((yes, no) => { resolve = yes; reject = no; });
+		const result = new Promise<any>((yes, no) => { resolve = yes; reject = no; });
+		if (surface === 'toast') f.result = result; else f.messageResult = result;
 		const notifications = new TerminalNotifications(f.service, f.host);
 		f.service.servers[0].terminals[0].status = 'needs_input'; f.fire();
 		if (stale === 'removed') f.service.servers[0].terminals = [];
+		if (stale === 'offline') f.service.servers[0].online = false;
 		if (stale === 'disposed') notifications.dispose();
-		if (stale === 'error') reject(new Error('unsupported')); else resolve({ shown: stale !== 'dismissed', clicked: stale !== 'dismissed' });
+		if (stale === 'error') reject(new Error('unsupported')); else resolve(surface === 'toast' ? { shown: stale !== 'dismissed', clicked: stale !== 'dismissed' } : stale !== 'dismissed');
 		await settle(); assert.equal(f.focused.length, 0);
 		assert.equal(f.errors.length, stale === 'error' ? 1 : 0); notifications.dispose();
 	}
 });
 
+test('in-app Focus works while the OS toast remains pending or rejects', async () => {
+	for (const failure of [false, true]) {
+		const f = fixture();
+		f.result = failure ? Promise.reject(new Error('toast unavailable')) : new Promise(() => {});
+		f.messageResult = Promise.resolve(true);
+		const notifications = new TerminalNotifications(f.service, f.host);
+		f.service.servers[0].terminals[0].status = 'needs_input'; f.fire(); f.fire();
+		assert.equal(f.messages.length, 1);
+		await settle();
+		assert.deepEqual(f.focused, [[{ host: 'local', slug: 'demo' }, 'claude-1']]);
+		assert.equal(f.errors.length, failure ? 1 : 0);
+		notifications.dispose();
+	}
+});
+
 test('registered clicks switch and restore before focus/open; findPane follows disposal and restored identity', async () => {
-	for (const mode of ['existing', 'open', 'switch', 'restore']) for (const crashed of mode === 'existing' ? [false, true] : [false]) {
+	for (const surface of ['toast', 'message']) for (const mode of ['existing', 'open', 'switch', 'restore']) for (const crashed of mode === 'existing' ? [false, true] : [false]) {
 		calls.length = 0; handlers.clear(); settings.clear(); window.tabGroups.all = []; window.state.focused = false;
 		settings.set('wsPath', process.execPath);
 		const f = fixture();
@@ -151,7 +175,8 @@ test('registered clicks switch and restore before focus/open; findPane follows d
 				assert.equal(grid.findPane('local', 'agent-id'), undefined, 'detach removes stale client lookup');
 				await selection.select(next);
 			});
-			handlers.set('_outscaled.notify', async () => ({ shown: true, clicked: true }));
+			handlers.set('_outscaled.notify', () => surface === 'toast' ? Promise.resolve({ shown: true, clicked: true }) : new Promise(() => {}));
+			handlers.set('message', async () => surface === 'message' ? 'Focus' : undefined);
 			registerNotifications(context, service, selection, grid, message => { throw new Error(message); });
 			settings.set('notifications.enabled', false);
 			service.servers[0].terminals[0].status = 'needs_input'; f.fire();
@@ -163,6 +188,8 @@ test('registered clicks switch and restore before focus/open; findPane follows d
 			f.fire();
 			await settle(); await (grid as any).queue;
 			const request = calls.find(call => call[0] === '_outscaled.notify')![1] as any;
+			const message = calls.filter(call => call[0] === 'warning' || call[0] === 'error');
+			assert.deepEqual(message, [[crashed ? 'error' : 'warning', `${request.title}: ${request.body}`, 'Focus']]);
 			assert.equal(request.processId, mode === 'existing' ? 1234 : undefined);
 			const switchIndex = calls.findIndex(call => call[0] === 'outscaled.switchWorkspace');
 			const showIndex = calls.findIndex(call => call[0] === 'show');

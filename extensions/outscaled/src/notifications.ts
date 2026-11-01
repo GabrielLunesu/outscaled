@@ -18,6 +18,7 @@ interface NotificationHost {
 	focused(): boolean;
 	pane(host: string, terminalId: string): { processId?: number; visible: boolean } | undefined;
 	notify(request: NotifyRequest): PromiseLike<{ shown: boolean; clicked: boolean } | undefined>;
+	message(request: NotifyRequest, kind: Kind): PromiseLike<boolean>;
 	focus(workspace: WorkspaceLocation, name: string): PromiseLike<unknown>;
 	log(message: string): void;
 }
@@ -53,25 +54,33 @@ export class TerminalNotifications implements vscode.Disposable {
 				if (!kind || previous.get(terminal.id) === kind || !this.host.enabled()) continue;
 				const pane = this.host.pane(server.host, terminal.id);
 				if (this.host.focused() && pane?.visible) continue;
-				void this.show(server, terminal, kind, pane?.processId).catch(error => this.host.log(`Notification: ${String(error)}`));
+				this.show(server, terminal, kind, pane?.processId);
 			}
 		}
 	}
 
-	private async show(server: ServerState, terminal: Terminal, kind: Kind, processId?: number): Promise<void> {
+	private show(server: ServerState, terminal: Terminal, kind: Kind, processId?: number): void {
 		const { id, name, workspace } = terminal;
-		const result = await this.host.notify({
+		const request = {
 			id: `outscaled:${JSON.stringify([server.host, id, kind])}`,
 			title: `${name} · ${workspace} · ${server.host}`,
 			body: kind === 'needs_input' ? 'Needs your input' : 'Crashed',
 			...(processId === undefined ? {} : { processId })
-		});
-		if (!result?.clicked || this.stopped) return;
-		// A toast can outlive the terminal or its server registration.
-		if (!this.service.servers.some(current => current.host === server.host && current.online && current.terminals.some(terminal => terminal.id === id))) return;
-		// The sidebar command serializes switching before focus/open, and persists
-		// its open request if entering the dedicated workspace reloads the window.
-		await this.host.focus({ host: server.host, slug: workspace }, name);
+		};
+		const focus = async (clicked: boolean) => {
+			if (!clicked || this.stopped) return;
+			// Either notification can outlive the terminal or its server registration.
+			if (!this.service.servers.some(current => current.host === server.host && current.online && current.terminals.some(terminal => terminal.id === id))) return;
+			// The sidebar command serializes switching before focus/open, and persists
+			// its open request if entering the dedicated workspace reloads the window.
+			await this.host.focus({ host: server.host, slug: workspace }, name);
+		};
+		const toast = async () => focus(!!(await this.host.notify(request))?.clicked);
+		const message = async () => focus(await this.host.message(request, kind));
+		// macOS can silently drop a toast and leave its promise pending forever.
+		// Deliver and handle each surface independently, including errors.
+		void toast().catch(error => this.host.log(`Notification: ${String(error)}`));
+		void message().catch(error => this.host.log(`Notification: ${String(error)}`));
 	}
 
 	dispose(): void { this.stopped = true; this.subscription.dispose(); this.previous.clear(); }
@@ -93,6 +102,14 @@ export function registerNotifications(context: vscode.ExtensionContext, service:
 				visible: paneVisible(pane.workspace, selection.current, pane.tab, vscode.window.tabGroups.all) };
 		},
 		notify: request => vscode.commands.executeCommand('_outscaled.notify', request),
+		message: async (request, kind) => {
+			const focus = vscode.l10n.t('Focus');
+			const text = `${request.title}: ${request.body}`;
+			const selected = kind === 'needs_input'
+				? await vscode.window.showWarningMessage(text, focus)
+				: await vscode.window.showErrorMessage(text, focus);
+			return selected === focus;
+		},
 		focus: (workspace, name) => vscode.commands.executeCommand('outscaled.focusTerminal', workspace, name),
 		log
 	}));

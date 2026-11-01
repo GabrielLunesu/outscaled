@@ -27,7 +27,12 @@ export const window = {
 	tabGroups: { all: [] as any[], activeTabGroup: { viewColumn: 1 },
 		onDidChangeTabs: tabChanges.event, onDidChangeTabGroups: tabChanges.event },
 	onDidCloseTerminal: closedTerminals.event,
-	showErrorMessage: (message: string) => { throw new Error(message); },
+	showWarningMessage: async (message: string, ...items: string[]) => {
+		calls.push(['warning', message, ...items]); return handlers.get('message')?.();
+	},
+	showErrorMessage: async (message: string, ...items: string[]) => {
+		calls.push(['error', message, ...items]); return handlers.get('message')?.();
+	},
 	createTerminal: (options: any) => {
 		calls.push(['createTerminal', options.name]);
 		let group = window.tabGroups.all.find(group => group.viewColumn === options.location.viewColumn);
