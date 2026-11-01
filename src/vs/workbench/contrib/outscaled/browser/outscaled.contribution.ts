@@ -10,8 +10,10 @@ import { Action2, registerAction2 } from '../../../../platform/actions/common/ac
 import { CommandsRegistry } from '../../../../platform/commands/common/commands.js';
 import { ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
 import { IQuickInputService, IQuickPickItem } from '../../../../platform/quickinput/common/quickInput.js';
+import { IHostService } from '../../../services/host/browser/host.js';
 import { ITerminalService } from '../../terminal/browser/terminal.js';
 import { ITerminalProfileResolverService } from '../../terminal/common/terminal.js';
+import { showNotification } from './notifications.js';
 import { ISetTerminalStatusRequest, TerminalStatus, TerminalStatusController } from './terminalStatus.js';
 import './media/terminalStatus.css';
 
@@ -19,6 +21,35 @@ const controller = new TerminalStatusController();
 
 CommandsRegistry.registerCommand('_outscaled.setTerminalStatus', (accessor, request: ISetTerminalStatusRequest) => {
 	return controller.setStatus(accessor.get(ITerminalService).instances, request, accessor.get(ITerminalProfileResolverService).getDefaultIcon());
+});
+
+CommandsRegistry.registerCommand('_outscaled.notify', (accessor, request: unknown) => {
+	return showNotification(accessor.get(IHostService), accessor.get(ITerminalService), request);
+});
+
+registerAction2(class extends Action2 {
+	constructor() {
+		super({
+			id: 'outscaled.testNotification',
+			title: localize2('outscaled.testNotification', "Outscaled: Test Notification"),
+			category: Categories.Developer,
+			f1: true
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const terminalService = accessor.get(ITerminalService);
+		const instance = terminalService.activeInstance;
+		if (!instance?.processId) {
+			return;
+		}
+		await showNotification(accessor.get(IHostService), terminalService, {
+			id: `outscaled-terminal-${instance.instanceId}`,
+			title: localize('outscaled.notification.testTitle', "Outscaled: Test Notification"),
+			body: localize('outscaled.notification.testBody', "Click to focus terminal {0}.", instance.title),
+			processId: instance.processId
+		});
+	}
 });
 
 registerAction2(class extends Action2 {
