@@ -88,6 +88,11 @@ export class TerminalGrid implements vscode.Disposable {
 		return this.queue;
 	}
 
+	/** Read-only attach-client lookup; daemon identity also works across workspace switches. */
+	findPane(host: string, terminalId: string): Readonly<LivePane> | undefined {
+		return [...this.panes].find(pane => !pane.closed && pane.workspace.host === host && pane.terminalId === terminalId);
+	}
+
 	private async open(request: OpenRequest): Promise<void> {
 		if (!this.selection.current || workspaceKey(this.selection.current) !== workspaceKey(request.workspace)) {
 			await this.context.globalState.update(pendingKey, request);

@@ -97,6 +97,11 @@
 		"configuration": {
 			"title": "Outscaled",
 			"properties": {
+				"outscaled.notifications.enabled": {
+					"type": "boolean",
+					"default": true,
+					"description": "%notifications.enabled%"
+				},
 				"outscaled.wsPath": {
 					"type": "string",
 					"default": "",

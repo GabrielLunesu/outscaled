@@ -9,6 +9,7 @@ import { registerWorkspacesView } from './workspaces/view';
 import { DaemonService } from './daemon/service';
 import { WorkspaceFileSystem } from './workspaces/fileSystem';
 import { registerWorkspaceSwitching } from './workspaces/switching';
+import { registerNotifications } from './notifications';
 
 let grid: TerminalGrid | undefined;
 
@@ -22,6 +23,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	registerWorkspacesView(context, daemons, selection);
 	grid = new TerminalGrid(context, daemons, selection, message => output.appendLine(message));
 	context.subscriptions.push(grid);
+	registerNotifications(context, daemons, selection, grid, message => output.appendLine(message));
 }
 
 export function deactivate(): Promise<void> | undefined { return grid?.flush(); }
