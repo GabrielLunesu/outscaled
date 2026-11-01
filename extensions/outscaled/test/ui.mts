@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-// Hermetic sidebar, workspace-switch and terminal-grid acceptance check. From the repo root:
+// Hermetic sidebar, workspace-switch, terminal-grid and notification acceptance check. From the repo root:
 //   cd daemon && ../scripts/serial.sh bun run build
 //   scripts/serial.sh node extensions/outscaled/test/ui.mts
 // Builds must already be current. No real daemon, SSH target or user config is used.
@@ -28,6 +28,10 @@ const temporary = mkdtempSync(join(tmpdir(), 'outscaled-ui-'));
 const bin = join(temporary, 'bin'); mkdirSync(bin);
 const config = join(temporary, 'client-config'); mkdirSync(config);
 const sshLog = join(temporary, 'ssh.jsonl');
+const notificationLog = join(evidence, 'notification-requests.jsonl');
+const notificationControl = join(temporary, 'notification-control.json');
+const notificationReady = join(temporary, 'notification-ready');
+writeFileSync(notificationLog, '');
 const daemons: { process?: ChildProcess; port: number; env: NodeJS.ProcessEnv }[] = [];
 let app: any;
 let win: any;
@@ -131,6 +135,30 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 		await request(index, `workspaces/${slug}/terminals`, { name: `${index === 0 ? 'mac' : 'vps'}-shell` });
 	}
 	const profile = join(temporary, 'profile');
+	// Only this throwaway test extension intercepts native toasts. Production
+	// contains no click simulation, logging hook or test command.
+	const notificationProbe = join(temporary, 'notification-probe'); mkdirSync(notificationProbe);
+	writeFileSync(join(notificationProbe, 'package.json'), JSON.stringify({ name: 'outscaled-notification-probe', publisher: 'test',
+		version: '0.0.1', engines: { vscode: '^1.143.0' }, main: './extension.cjs', activationEvents: ['*'] }));
+	writeFileSync(notificationControl, '{}');
+	writeFileSync(join(notificationProbe, 'extension.cjs'), `
+const vscode = require('vscode');
+const fs = require('node:fs');
+exports.activate = context => {
+  const read = () => { try { return JSON.parse(fs.readFileSync(${JSON.stringify(notificationControl)}, 'utf8')); } catch { return {}; } };
+  context.subscriptions.push(vscode.commands.registerCommand('_outscaled.notify', request => {
+    fs.appendFileSync(${JSON.stringify(notificationLog)}, JSON.stringify(request) + '\\n');
+    if (read().hold !== request.id) return { shown: false, clicked: false };
+    return new Promise(resolve => {
+      const timer = setInterval(() => {
+        if (read().click === request.id) { clearInterval(timer); resolve({ shown: true, clicked: true }); }
+      }, 50);
+      context.subscriptions.push({ dispose: () => { clearInterval(timer); resolve({ shown: false, clicked: false }); } });
+    });
+  }));
+  fs.writeFileSync(${JSON.stringify(notificationReady)}, 'ready');
+};
+`);
 	mkdirSync(join(profile, 'data/User'), { recursive: true });
 	writeFileSync(join(profile, 'data/User/settings.json'), JSON.stringify({ 'window.title': 'Outscaled sidebar acceptance', 'workbench.startupEditor': 'none', 'workbench.secondarySideBar.defaultVisibility': 'hidden', 'window.confirmSaveUntitledWorkspace': false, 'files.simpleDialog.enable': true, 'outscaled.wsPath': join(root, 'daemon/dist/ws'), 'editor.accessibilitySupport': 'on', 'explorer.compactFolders': false }));
 	const env = { ...process.env, NODE_ENV: 'development', VSCODE_DEV: '1', VSCODE_CLI: '1',
@@ -142,6 +170,7 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	app = await _electron.launch({
 		executablePath: join(root, '.build/electron', `${product.nameLong}.app`, 'Contents/MacOS', product.nameShort),
 		args: [root, join(temporary, 'registered-local'), '--user-data-dir', join(profile, 'data'),
+			'--extensionDevelopmentPath', notificationProbe,
 			'--shared-data-dir', join(profile, 'shared'), '--extensions-dir', join(profile, 'ext'),
 			'--skip-release-notes', '--skip-welcome', '--disable-workspace-trust', '--disable-telemetry',
 			'--disable-updates', '--disable-extension=vscode.vscode-api-tests', '--disable-extension=vscode.json-language-features'], env, timeout: 120000
@@ -167,6 +196,7 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	await win.screenshot({ path: join(evidence, '00-launched.png') });
 	// Optional review gate lets the caller inspect the real launch before interaction.
 	if (process.env.UI_INSPECT_LAUNCH) await until(() => existsSync(join(evidence, 'launch-inspected')), 'visual launch inspection', 60000);
+	await until(() => existsSync(notificationReady), 'notification probe activated');
 	await win.locator('.activitybar .action-item a[aria-label^="Outscaled"]').click();
 	await until(async () => (await win.locator('.sidebar').innerText()).includes('vps-agent'), 'both servers and their terminals');
 	assert.ok((await win.locator('.sidebar').innerText()).includes('mac-shell'));
@@ -557,6 +587,38 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	await assertNoUnexpectedConfirmations();
 	writeFileSync(join(evidence, 'detach-dialog-proof.json'), JSON.stringify(await confirmations(), null, 2));
 	console.log('PASS: default confirmOnKill, detected/live attach children on every grid switch, zero native termination prompts during detach');
+	// A permission request for a detached workspace must dispatch a native-toast
+	// command without its disposed process id. A click restores then focuses it.
+	await request(0, 'hooks/claude-code', { terminal: claude.id, payload: { hook_event_name: 'Stop' } });
+	await until(async () => (await row('claude-1').first().innerText()).includes('idle'), 'local notification baseline idle');
+	await switchWorkspace('vps-demo');
+	await until(async () => (await paneNames()).join() === 'claude-1,shell-1', 'remote grid selected before notification');
+	const notificationId = `outscaled:${JSON.stringify(['local', claude.id, 'needs_input'])}`;
+	writeFileSync(notificationControl, JSON.stringify({ hold: notificationId }));
+	const notifications = () => readFileSync(notificationLog, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+	const before = notifications().length;
+	await request(0, 'hooks/claude-code', { terminal: claude.id, payload: { hook_event_name: 'Notification', notification_type: 'permission_prompt' } });
+	await until(() => notifications().slice(before).some(request => request.id === notificationId), 'native notification command captured');
+	const notification = notifications().slice(before).find(request => request.id === notificationId);
+	assert.equal(notification.title, 'claude-1 · mac-demo · local');
+	assert.equal(notification.body, 'Needs your input');
+	assert.equal(notification.processId, undefined, 'detached pane process id is omitted');
+	await capture('24-notification-other-workspace');
+	await proveAttachChildren();
+	writeFileSync(notificationControl, JSON.stringify({ click: notificationId }));
+	await selected('mac-demo');
+	await until(async () => (await paneNames()).join() === 'claude-1,codex-1', 'notification click restores remembered grid');
+	await until(async () => await win.locator('.editor-group-container.active .tabs-container .tab.active').filter({ hasText: 'claude-1' }).count() === 1,
+		'notification click focuses claude-1 pane');
+	await until(async () => await win.evaluate(() => !!document.activeElement?.closest('.terminal-wrapper')), 'terminal receives keyboard focus');
+	const activeElement = await win.evaluate(() => ({ tag: document.activeElement?.tagName, className: document.activeElement?.className }));
+	writeFileSync(join(evidence, 'notification-click-proof.json'), JSON.stringify({ notification, selected: 'mac-demo', activeElement, groups: await gridProof(),
+		verified: 'Real daemon hook -> shared state -> notify command; simulated clicked result -> workspace switch and terminal keyboard focus',
+		notVerified: 'Native OS notification display, OS click delivery, and bringing a background window forward (probe replaces native command)' }, null, 2));
+	await capture('25-notification-click-focused');
+	console.log('PASS: permission hook dispatched correct notification id/title/body without stale processId; simulated click restored workspace grid and focused its terminal');
+	await assertNoUnexpectedConfirmations();
+	writeFileSync(join(evidence, 'detach-dialog-proof.json'), JSON.stringify(await confirmations(), null, 2));
 	const logs: string[] = [];
 	const walk = (directory: string) => {
 		for (const entry of readdirSync(directory, { withFileTypes: true })) {
