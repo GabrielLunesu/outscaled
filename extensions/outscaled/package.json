@@ -29,6 +29,17 @@
 		"test": "node test/run.mjs"
 	},
 	"contributes": {
+		"themes": [
+			{
+				"id": "carbon-candy-matrix-neon-blur",
+				"label": "Carbon Candy Matrix Cyber",
+				"uiTheme": "vs-dark",
+				"path": "./themes/carbon-candy-matrix-neon-blur.json"
+			}
+		],
+		"configurationDefaults": {
+			"workbench.colorTheme": "carbon-candy-matrix-neon-blur"
+		},
 		"viewsContainers": {
 			"activitybar": [
 				{

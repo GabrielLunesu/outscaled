@@ -3,6 +3,27 @@
 The built-in extension owns one `DaemonService` connection per server. The sidebar
 and the `ws` filesystem provider share those connections and SSH tunnels.
 
+## Default colour theme
+
+Fresh profiles use **Carbon Candy Matrix Cyber**. Choose another theme with
+**Preferences: Color Theme**; an explicit user choice takes precedence over this
+extension's `workbench.colorTheme` default (`carbon-candy-matrix-neon-blur`, the
+contributed theme id used by VS Code as its settings id).
+
+The theme is by Alessandro Torrisi (Viral Team), from
+[Carbon Candy](https://github.com/viral-team/carbon-candy-theme), pinned to commit
+[`0793a0766d658923681c662bbc4c49c873113623`](https://github.com/viral-team/carbon-candy-theme/tree/0793a0766d658923681c662bbc4c49c873113623).
+`themes/carbon-candy-matrix-neon-blur.json` is copied byte for byte; its MIT licence
+and copyright are in [themes/LICENSE-carbon-candy.txt](themes/LICENSE-carbon-candy.txt).
+Only this colour theme is bundled; Carbon Candy's runtime and icon themes are not
+included.
+
+The full Carbon Candy extension can also be installed. VS Code gives each theme
+an internal id derived from its extension and path, so the contributions coexist.
+For duplicate settings ids, the theme registry returns the first match. Built-in
+extensions register before user extensions, so the default resolves to Outscaled's
+bundled copy even with Carbon Candy installed.
+
 ## Workspace switching (Phase 3, item 3)
 
 Click a workspace in the Outscaled sidebar, or run **Switch Outscaled Workspace**
