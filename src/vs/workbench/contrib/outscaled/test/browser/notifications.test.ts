@@ -16,6 +16,7 @@ import { ITerminalInstance, ITerminalService } from '../../../terminal/browser/t
 import { showNotification } from '../../browser/notifications.js';
 
 class TestHostService extends mock<IHostService>() {
+	override hasFocus = true;
 	readonly toasts: IToastOptions[] = [];
 	readonly completion = new DeferredPromise<IToastResult>();
 	readonly focusCalls: { targetWindow: Window; mode: FocusMode | undefined }[] = [];
@@ -75,6 +76,21 @@ suite('Outscaled - Notifications', () => {
 			deepStrictEqual(await showNotification(host, terminals, invalidRequest), { shown: false, clicked: false });
 		}
 		deepStrictEqual([host.toasts, host.focusCalls, terminals.focused], [[], [], []]);
+	});
+
+	test('requests attention only in the background, without waiting for the toast outcome', async () => {
+		for (const hasFocus of [false, true]) {
+			const host = new TestHostService();
+			host.hasFocus = hasFocus;
+			const terminals = new TestTerminalService(host);
+			const pending = showNotification(host, terminals, request);
+			await Promise.resolve();
+			deepStrictEqual(host.focusCalls, hasFocus ? [] : [{ targetWindow: mainWindow, mode: FocusMode.Notify }]);
+			deepStrictEqual(host.toasts, [{ dedupeKey: request.id, title: request.title, body: request.body }]);
+			await host.completion.complete({ supported: true, clicked: true });
+			deepStrictEqual(await pending, { shown: true, clicked: true });
+			deepStrictEqual(host.focusCalls.map(call => call.mode), hasFocus ? [FocusMode.Force] : [FocusMode.Notify, FocusMode.Force]);
+		}
 	});
 
 	test('waits for dismissal and forwards the notification content', async () => {
