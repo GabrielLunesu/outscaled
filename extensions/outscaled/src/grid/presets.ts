@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-export interface EditorGroupLayout { orientation?: 0 | 1; groups: { groups?: EditorGroupLayout['groups'] }[]; }
+export interface EditorGroupLayout { orientation?: 0 | 1; groups: { size?: number; groups?: EditorGroupLayout['groups'] }[]; }
 export interface GridLayout { id: string; label: string; editor: EditorGroupLayout; /** ViewColumns in preset fill order. */ columns: readonly number[]; }
 
 // Depth-first editor group order is row-major for this 2×2 definition. In 2+1,

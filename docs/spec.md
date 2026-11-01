@@ -313,7 +313,7 @@ scripts/serial.sh                    one build or full test suite at a time
 - [x] The sidebar shows workspaces from the Mac and one VPS, with status dots updating live.
 - [x] Clicking a VPS workspace switches explorer and editor to it without reloading the window.
 - [x] "2 Claude + 2 Codex" opens a 2×2 grid of terminals attached to tmux sessions.
-- [ ] Tab colours change live (grey, green, red), and switching back to a workspace restores its grid.
+- [x] Tab colours change live (grey, green, red), and switching back to a workspace restores its grid.
 - [ ] Needs-you fires an OS notification; clicking it focuses that terminal.
 
 **Phase 4 · Desktop and browser: done when**

@@ -10,6 +10,8 @@ import { DaemonService } from './daemon/service';
 import { WorkspaceFileSystem } from './workspaces/fileSystem';
 import { registerWorkspaceSwitching } from './workspaces/switching';
 
+let grid: TerminalGrid | undefined;
+
 export function activate(context: vscode.ExtensionContext): void {
 	const output = vscode.window.createOutputChannel('Outscaled');
 	const daemons = new DaemonService(message => output.appendLine(message));
@@ -18,5 +20,8 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(files, vscode.workspace.registerFileSystemProvider('ws', files, { isCaseSensitive: true }));
 	const selection = registerWorkspaceSwitching(context, daemons, message => output.appendLine(message));
 	registerWorkspacesView(context, daemons, selection);
-	context.subscriptions.push(new TerminalGrid(context, daemons, selection, message => output.appendLine(message)));
+	grid = new TerminalGrid(context, daemons, selection, message => output.appendLine(message));
+	context.subscriptions.push(grid);
 }
+
+export function deactivate(): Promise<void> | undefined { return grid?.flush(); }

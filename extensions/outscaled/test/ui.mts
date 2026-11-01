@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -88,9 +88,23 @@ try {
 const {appendFileSync}=require('node:fs');
 const {connect,createServer}=require('node:net');
 const args=process.argv.slice(2), forward=args[args.indexOf('-L')+1];
-if(args.at(-1)!=='example-alias'||!/^127\\.0\\.0\\.1:\\d+:127\\.0\\.0\\.1:7770$/.test(forward))process.exit(255);
-appendFileSync(process.env.TEST_SSH_LOG,JSON.stringify({pid:process.pid,args})+'\\n');
-createServer(socket=>{const remote=connect({host:'127.0.0.1',port:Number(process.env.TEST_REMOTE_PORT)});socket.pipe(remote).pipe(socket);socket.on('error',()=>remote.destroy());remote.on('error',()=>socket.destroy());socket.on('close',()=>remote.destroy());remote.on('close',()=>socket.destroy());}).listen(Number(forward.split(':')[1]),'127.0.0.1');
+const record=kind=>appendFileSync(process.env.TEST_SSH_LOG,JSON.stringify({pid:process.pid,args,kind})+'\\n');
+if(args[0]==='-t'&&args[1]==='example-alias'){
+ const command=args.slice(2).map(arg=>arg.replace(/^'|'$/g,''));
+ if(JSON.stringify(command.slice(0,-1))!==JSON.stringify(['sudo','-n','-u','ws','-H','tmux','-u','attach-session','-t'])||!/^=ws-vps-demo-[a-z0-9-]+$/.test(command.at(-1)))process.exit(255);
+ record('attach');
+ const child=require('node:child_process').spawn('tmux',['-u','-S',process.env.TEST_REMOTE_TMUX_SOCKET,'attach-session','-t',command.at(-1)],{stdio:'inherit'});
+ for(const signal of ['SIGTERM','SIGHUP','SIGINT'])process.on(signal,()=>child.kill(signal));
+ child.on('exit',code=>process.exit(code??1));
+}else{
+ if(args.at(-1)!=='example-alias'||!args.includes('-L'))process.exit(255);
+ const tcp=/^127\\.0\\.0\\.1:\\d+:127\\.0\\.0\\.1:7770$/.test(forward);
+ const unix=forward.endsWith(':127.0.0.1:'+process.env.WSD_PORT)&&forward.startsWith(require('node:os').tmpdir()+'/ws-');
+ if(!tcp&&!unix)process.exit(255);
+ record(tcp?'extension-tunnel':'cli-tunnel');
+ const server=createServer(socket=>{const remote=connect({host:'127.0.0.1',port:Number(process.env.TEST_REMOTE_PORT)});socket.pipe(remote).pipe(socket);socket.on('error',()=>remote.destroy());remote.on('error',()=>socket.destroy());socket.on('close',()=>remote.destroy());remote.on('close',()=>socket.destroy());});
+ if(tcp)server.listen(Number(forward.split(':')[1]),'127.0.0.1');else server.listen(forward.slice(0,forward.lastIndexOf(':127.0.0.1:')));
+}
 `, { mode: 0o755 });
 	writeFileSync(join(config, 'servers.toml'), '[[server]]\nhost = "example-alias"\n');
 	for (const name of ['mac', 'vps']) {
@@ -118,10 +132,10 @@ createServer(socket=>{const remote=connect({host:'127.0.0.1',port:Number(process
 	}
 	const profile = join(temporary, 'profile');
 	mkdirSync(join(profile, 'data/User'), { recursive: true });
-	writeFileSync(join(profile, 'data/User/settings.json'), JSON.stringify({ 'window.title': 'Outscaled sidebar acceptance', 'workbench.startupEditor': 'none', 'workbench.secondarySideBar.defaultVisibility': 'hidden', 'window.confirmSaveUntitledWorkspace': false, 'files.simpleDialog.enable': true, 'outscaled.wsPath': join(root, 'daemon/dist/ws'), 'editor.accessibilitySupport': 'on', 'explorer.compactFolders': false, 'terminal.integrated.confirmOnKill': 'never' }));
+	writeFileSync(join(profile, 'data/User/settings.json'), JSON.stringify({ 'window.title': 'Outscaled sidebar acceptance', 'workbench.startupEditor': 'none', 'workbench.secondarySideBar.defaultVisibility': 'hidden', 'window.confirmSaveUntitledWorkspace': false, 'files.simpleDialog.enable': true, 'outscaled.wsPath': join(root, 'daemon/dist/ws'), 'editor.accessibilitySupport': 'on', 'explorer.compactFolders': false }));
 	const env = { ...process.env, NODE_ENV: 'development', VSCODE_DEV: '1', VSCODE_CLI: '1',
 		WSD_PORT: String(daemons[0].port), WSD_TMUX_SOCKET: daemons[0].env.WSD_TMUX_SOCKET, OUTSCALED_CONFIG_DIR: config, PATH: `${bin}:${process.env.PATH}`,
-		TEST_REMOTE_PORT: String(daemons[1].port), TEST_SSH_LOG: sshLog };
+		TEST_REMOTE_PORT: String(daemons[1].port), TEST_REMOTE_TMUX_SOCKET: daemons[1].env.WSD_TMUX_SOCKET, TEST_SSH_LOG: sshLog };
 	delete env.ELECTRON_RUN_AS_NODE;
 	delete env.GIT_CONFIG_COUNT;
 	delete env.GIT_CONFIG_PARAMETERS;
@@ -131,6 +145,21 @@ createServer(socket=>{const remote=connect({host:'127.0.0.1',port:Number(process
 			'--shared-data-dir', join(profile, 'shared'), '--extensions-dir', join(profile, 'ext'),
 			'--skip-release-notes', '--skip-welcome', '--disable-workspace-trust', '--disable-telemetry',
 			'--disable-updates', '--disable-extension=vscode.vscode-api-tests', '--disable-extension=vscode.json-language-features'], env, timeout: 120000
+	});
+	// Observe native dialogs rather than relying on DOM visibility. Only explicit
+	// user-close tests may confirm termination. A switch that asks is a failure;
+	// cancel it so a regression cannot strand a native modal during cleanup.
+	await app.evaluate(({ dialog }: any) => {
+		const state = { allowUserClose: false, confirmations: [] as { message: string; expected: boolean }[] };
+		(globalThis as any).__outscaledDialogs = state;
+		const original = dialog.showMessageBox.bind(dialog);
+		dialog.showMessageBox = (...args: any[]) => {
+			const options = args.find(arg => arg && typeof arg.message === 'string');
+			if (!/terminate running processes/i.test(options?.message ?? '')) return original(...args);
+			state.confirmations.push({ message: options.message, expected: state.allowUserClose });
+			const terminate = options.buttons.findIndex((button: string) => /terminate/i.test(button));
+			return Promise.resolve({ response: state.allowUserClose ? terminate : options.cancelId, checkboxChecked: false });
+		};
 	});
 	win = await app.firstWindow();
 	win.setDefaultTimeout(30000);
@@ -302,10 +331,54 @@ createServer(socket=>{const remote=connect({host:'127.0.0.1',port:Number(process
 		await win.locator('.quick-input-list .monaco-list-row').filter({ hasText: title }).first().waitFor();
 		await win.keyboard.press('Enter');
 	};
+	// Test-only renderer probe. Read the actual child-process monitor and effective
+	// setting from workbench services; no production hooks or settings overrides.
+	const installTerminalProbe = async () => {
+		await win.evaluate(async (base: string) => {
+			const { CommandsRegistry } = await import(base + 'vs/platform/commands/common/commands.js');
+			const { MenuRegistry, MenuId } = await import(base + 'vs/platform/actions/common/actions.js');
+			const { ITerminalService } = await import(base + 'vs/workbench/contrib/terminal/browser/terminal.js');
+			const { IConfigurationService } = await import(base + 'vs/platform/configuration/common/configuration.js');
+			const id = 'outscaled.test.inspectAttachClients';
+			CommandsRegistry.registerCommand(id, (accessor: any) => {
+				(window as any).__outscaledTerminalProbe = { service: accessor.get(ITerminalService), configuration: accessor.get(IConfigurationService) };
+			});
+			MenuRegistry.appendMenuItem(MenuId.CommandPalette, { command: { id, title: 'Outscaled Test: Inspect Attach Clients' } });
+		}, pathToFileURL(join(root, 'out/')).href.replace('file://', 'vscode-file://vscode-app'));
+		await command('Outscaled Test: Inspect Attach Clients');
+	};
+	const childProof: unknown[] = [];
+	const proveAttachChildren = async () => {
+		let snapshot: any;
+		await until(async () => {
+			snapshot = await win.evaluate(() => {
+				const probe = (window as any).__outscaledTerminalProbe;
+				return { confirmOnKill: probe.configuration.getValue('terminal.integrated.confirmOnKill'),
+					defaultConfirmOnKill: probe.configuration.inspect('terminal.integrated.confirmOnKill').defaultValue,
+					panes: probe.service.instances.map((terminal: any) => ({ name: terminal.title, processId: terminal.processId, hasChildProcesses: terminal.hasChildProcesses })) };
+			});
+			return snapshot.panes.length > 0 && snapshot.panes.every((pane: any) => pane.processId && pane.hasChildProcesses);
+		}, 'VS Code child-process detection for every attach client');
+		assert.equal(snapshot.confirmOnKill, 'editor');
+		assert.equal(snapshot.confirmOnKill, snapshot.defaultConfirmOnKill, 'use the default confirmOnKill setting');
+		const processes = spawnSync('ps', ['-axo', 'pid=,ppid='], { encoding: 'utf8' });
+		assert.equal(processes.status, 0);
+		const parents = processes.stdout.trim().split('\n').map(line => line.trim().split(/\s+/).map(Number));
+		for (const pane of snapshot.panes) {
+			pane.childPids = parents.filter(([, parent]) => parent === pane.processId).map(([pid]) => pid);
+			assert.ok(pane.childPids.length > 0, `${pane.name}: attach client still has a live child before switching`);
+		}
+		childProof.push(snapshot);
+		writeFileSync(join(evidence, 'detach-children-proof.json'), JSON.stringify(childProof, null, 2));
+	};
+	const confirmations = () => app.evaluate(() => (globalThis as any).__outscaledDialogs.confirmations);
+	const assertNoUnexpectedConfirmations = async () => assert.deepEqual((await confirmations()).filter((entry: any) => !entry.expected), [], 'no native termination confirmation during grid detach');
+	const allowUserClose = (allowed: boolean) => app.evaluate((_: any, value: boolean) => { (globalThis as any).__outscaledDialogs.allowUserClose = value; }, allowed);
+	await installTerminalProbe();
 	await command('View: Close All Editors');
-	const openGrid = async () => {
+	const openGrid = async (label = '2 Claude + 2 Codex') => {
 		await command('Outscaled: Open Grid');
-		await win.locator('.quick-input-list .monaco-list-row').filter({ hasText: '2 Claude + 2 Codex' }).click();
+		await win.locator('.quick-input-list .monaco-list-row').filter({ hasText: label }).click();
 	};
 	const gridProof = () => win.locator('.editor-group-container').evaluateAll((groups: Element[]) => groups.map(group => {
 		const bounds = group.getBoundingClientRect();
@@ -352,8 +425,12 @@ createServer(socket=>{const remote=connect({host:'127.0.0.1',port:Number(process
 	assert.ok(needsInput.some((group: any) => group.tabs.some((tab: any) => tab.name === 'claude-1' && tab.icons.some((icon: any) => icon.color === 'rgb(205, 49, 49)' || icon.beforeColor === 'rgb(205, 49, 49)'))), 'needs-input tab is red');
 	writeFileSync(join(evidence, 'grid-status-proof.json'), JSON.stringify({ working, needsInput }, null, 2));
 	await capture('15-grid-needs-input');
+	await proveAttachChildren();
+	await allowUserClose(true);
 	await command('View: Close All Editors');
 	await until(async () => await win.locator('.tabs-container .tab').count() === 0, 'grid closed');
+	await allowUserClose(false);
+	assert.ok((await confirmations()).length > 0, 'default setting really confirms an explicit editor-terminal close');
 	await openGrid();
 	await until(async () => {
 		const groups = await gridProof();
@@ -367,6 +444,119 @@ createServer(socket=>{const remote=connect({host:'127.0.0.1',port:Number(process
 	await capture('16-grid-reused-focused');
 	writeFileSync(join(evidence, 'grid-reuse-proof.json'), JSON.stringify({ ids: reused.map((terminal: any) => terminal.id), groups: await gridProof() }, null, 2));
 	console.log('PASS: 2×2 attached grid, four daemon/tmux sessions, live green spinner/red dot, reuse and sidebar focus');
+
+	// A -> remote B -> A -> B, preserving daemon sessions and tmux screen contents.
+	const gridSentinel = `grid-switch-${Date.now()}`;
+	await win.evaluate((value: string) => { (window as any).__outscaledSwitchSentinel = value; }, gridSentinel);
+	const gridHostsBefore = extensionPids();
+	const extensionTunnels = () => readFileSync(sshLog, 'utf8').trim().split('\n').map(line => JSON.parse(line)).filter(entry => entry.kind === 'extension-tunnel');
+	const gridTunnelsBefore = extensionTunnels().map(entry => entry.pid);
+	const marker = 'GRID_RESTORE_MARKER';
+	await win.locator('.tabs-container .tab').filter({ hasText: 'codex-1' }).click();
+	await win.locator('.editor-group-container.active .xterm-helper-textarea').focus();
+	await win.keyboard.type(marker); await win.keyboard.press('Enter');
+	await until(async () => (await gridProof()).some((group: any) => group.tabs.some((tab: any) => tab.name === 'codex-1') && group.text.includes(marker)), 'typed marker visible in codex pane');
+	await capture('17-a-marker');
+	const switchWorkspace = async (slug: string) => {
+		await proveAttachChildren();
+		await row(slug).locator('.label-name').click(); await selected(slug);
+		await assertNoUnexpectedConfirmations();
+	};
+	const paneNames = async () => (await gridProof()).flatMap((group: any) => group.tabs.map((tab: any) => tab.name)).sort();
+	await switchWorkspace('vps-demo');
+	await until(async () => !(await paneNames()).some((name: string) => names.includes(name)), 'A panes detached on B');
+	// The earlier filesystem test remembered a remote file editor. Start this
+	// scenario with just terminal panes, as on A above.
+	await command('View: Close All Editors');
+	await openGrid('1 Claude + shell');
+	await until(async () => {
+		const groups = await gridProof();
+		return groups.length === 2 && groups[0].text.includes('fake claude ready') && groups[1].text.length > 0;
+	}, 'remote B attached side-by-side grid');
+	assert.deepEqual(await paneNames(), ['claude-1', 'shell-1']);
+	const bGroups = await gridProof();
+	assert.equal(bGroups[0].y, bGroups[1].y); assert.ok(bGroups[0].x < bGroups[1].x);
+	const bTerminals = await request(1, 'workspaces/vps-demo/terminals');
+	const identities = (terminals: any[]) => terminals.map(({ id, session, name, pid, createdAt }) => ({ id, session, name, pid, createdAt })).sort((a, b) => a.id.localeCompare(b.id));
+	await capture('18-b-grid');
+	await switchWorkspace('mac-demo');
+	await until(async () => {
+		const groups = await gridProof();
+		return groups.length === 4 && groups.every((group: any) => group.tabs.length === 1 && /fake (claude|codex) ready/.test(group.text)) && groups.some((group: any) => group.text.includes(marker));
+	}, 'A restored 2x2 with marker');
+	assert.deepEqual(await paneNames(), [...names].sort());
+	const restoredA = (await gridProof()).sort((a: any, b: any) => a.y - b.y || a.x - b.x);
+	assert.deepEqual(restoredA.map((group: any) => group.tabs[0].name), names);
+	assert.equal(restoredA[0].y, restoredA[1].y); assert.equal(restoredA[2].y, restoredA[3].y);
+	assert.ok(restoredA[0].y < restoredA[2].y && restoredA[0].x < restoredA[1].x);
+	assert.deepEqual(identities((await request(0, 'workspaces/mac-demo/terminals')).filter((terminal: any) => names.includes(terminal.name))), identities(gridTerminals));
+	await request(0, 'hooks/claude-code', { terminal: claude.id, payload: { hook_event_name: 'UserPromptSubmit' } });
+	await until(async () => await tab.locator('[class*="codicon-loading~spin"]').count() > 0, 'restored A live working spinner');
+	const restoredStatus = await gridProof();
+	assert.ok(restoredStatus.some((group: any) => group.tabs.some((tab: any) => tab.name === 'claude-1' && tab.icons.some((icon: any) => icon.color === 'rgb(13, 188, 121)' || icon.beforeColor === 'rgb(13, 188, 121)'))));
+	await capture('19-a-restored-live');
+	await switchWorkspace('vps-demo');
+	await until(async () => (await gridProof()).length === 2 && (await paneNames()).join() === 'claude-1,shell-1', 'B side-by-side restored');
+	await until(async () => (await gridProof())[0].text.includes('fake claude ready'), 'B reattached output');
+	assert.deepEqual(identities(await request(1, 'workspaces/vps-demo/terminals')), identities(bTerminals));
+	const restoredB = await gridProof();
+	assert.equal(restoredB[0].y, restoredB[1].y); assert.ok(restoredB[0].x < restoredB[1].x);
+	await capture('20-b-restored');
+	assert.equal(await win.evaluate(() => (window as any).__outscaledSwitchSentinel), gridSentinel, 'renderer survived grid switches');
+	assert.deepEqual(extensionPids(), gridHostsBefore, 'extension host survived grid switches');
+	assert.deepEqual(extensionTunnels().map(entry => entry.pid), gridTunnelsBefore, 'shared extension tunnel survived grid switches');
+	writeFileSync(join(evidence, 'grid-switch-proof.json'), JSON.stringify({ marker, sentinel: gridSentinel,
+		extensionHostPidsBefore: gridHostsBefore, extensionHostPidsAfter: extensionPids(), restoredA, restoredStatus, restoredB,
+		aSessions: identities(gridTerminals), bSessions: identities(bTerminals) }, null, 2));
+	await command('Developer: Reload Window');
+	await until(async () => {
+		try { return await win.evaluate(() => (window as any).__outscaledSwitchSentinel === undefined); } catch { return false; }
+	}, 'grid deliberate reload');
+	await row('vps-demo').waitFor({ state: 'visible' }); await selected('vps-demo');
+	await until(async () => {
+		const groups = await gridProof();
+		return groups.length === 2 && groups[0].text.includes('fake claude ready') && (await paneNames()).join() === 'claude-1,shell-1';
+	}, 'selected B grid restored after reload');
+	assert.deepEqual(identities(await request(1, 'workspaces/vps-demo/terminals')), identities(bTerminals));
+	assert.equal(extensionPids().length, gridHostsBefore.length + 1, 'only deliberate grid reload restarted extension host');
+	await capture('21-b-after-reload');
+	writeFileSync(join(evidence, 'grid-reload-proof.json'), JSON.stringify({ groups: await gridProof(), extensionHostPids: extensionPids(), sessions: identities(bTerminals) }, null, 2));
+	console.log('PASS: A/B grids restore without reload/restart, same daemon sessions and typed marker, live tab colour, selected grid restored after reload');
+	await installTerminalProbe();
+
+	// Manual changes, including moving a terminal between groups, become the grid.
+	await switchWorkspace('mac-demo');
+	await until(async () => (await paneNames()).join() === [...names].sort().join(), 'A restored for manual edits');
+	await win.locator('.tabs-container .tab').filter({ hasText: 'codex-1' }).click();
+	await command('View: Move Editor into Next Group');
+	await until(async () => (await gridProof()).some((group: any) => group.tabs.some((tab: any) => tab.name === 'codex-1') && group.tabs.some((tab: any) => tab.name === 'codex-2')), 'codex panes moved into same group');
+	await win.locator('.tabs-container .tab').filter({ hasText: 'claude-2' }).click();
+	await allowUserClose(true);
+	await win.keyboard.press('Meta+w');
+	await until(async () => !(await paneNames()).includes('claude-2'), 'user-closed claude pane');
+	await allowUserClose(false);
+	const editedGroups = (await gridProof()).map((group: any) => group.tabs.map((tab: any) => tab.name));
+	await switchWorkspace('vps-demo');
+	await until(async () => (await paneNames()).join() === 'claude-1,shell-1', 'B after manual A edits');
+	await switchWorkspace('mac-demo');
+	await until(async () => (await paneNames()).join() === 'claude-1,codex-1,codex-2', 'A restores actual remaining panes');
+	assert.deepEqual((await gridProof()).map((group: any) => group.tabs.map((tab: any) => tab.name)), editedGroups);
+	assert.equal((await request(0, 'workspaces/mac-demo/terminals')).find((terminal: any) => terminal.name === 'claude-2').state, 'running', 'closing client only detaches');
+	await capture('22-manual-grid-restored');
+	await switchWorkspace('vps-demo');
+	await until(async () => (await paneNames()).join() === 'claude-1,shell-1', 'B before daemon exit');
+	const exited = gridTerminals.find((terminal: any) => terminal.name === 'codex-2');
+	process.kill(exited.pid, 'SIGKILL');
+	await until(async () => (await request(0, 'workspaces/mac-demo/terminals')).find((terminal: any) => terminal.id === exited.id)?.state !== 'running', 'remembered daemon terminal exited');
+	await switchWorkspace('mac-demo');
+	await until(async () => (await paneNames()).join() === 'claude-1,codex-1', 'restore omits exited terminal without failing other panes');
+	assert.deepEqual((await request(0, 'workspaces/mac-demo/terminals')).filter((terminal: any) => names.includes(terminal.name)).map((terminal: any) => terminal.id).sort(), gridTerminals.map((terminal: any) => terminal.id).sort(), 'restore created no daemon terminals');
+	assert.equal((await request(0, 'workspaces/mac-demo/terminals')).find((terminal: any) => terminal.id === exited.id).state, 'exited', 'restore did not restart exited agent');
+	await capture('23-exited-pane-omitted');
+	console.log('PASS: manual cross-group moves and closes remembered; exited daemon pane omitted without restarting it');
+	await assertNoUnexpectedConfirmations();
+	writeFileSync(join(evidence, 'detach-dialog-proof.json'), JSON.stringify(await confirmations(), null, 2));
+	console.log('PASS: default confirmOnKill, detected/live attach children on every grid switch, zero native termination prompts during detach');
 	const logs: string[] = [];
 	const walk = (directory: string) => {
 		for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -380,7 +570,7 @@ createServer(socket=>{const remote=connect({host:'127.0.0.1',port:Number(process
 	walk(join(profile, 'data/logs'));
 	assert.deepEqual(logs, []);
 	await app.close(); app = undefined;
-	await until(() => invocations.every(invocation => { try { process.kill(invocation.pid, 0); return false; } catch { return true; } }), 'extension tunnel cleanup');
+	await until(() => extensionTunnels().every(invocation => { try { process.kill(invocation.pid, 0); return false; } catch { return true; } }), 'extension tunnel cleanup');
 } finally {
 	if (app) {
 		const copyLogs = (directory: string, prefix = '') => {
