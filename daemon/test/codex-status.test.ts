@@ -34,9 +34,11 @@ await Bun.write(id + ".launch.json", JSON.stringify({args, notify, terminal: id,
 console.log("startup");
 if (args.includes("--exit")) process.exit(23);
 if (args.includes("--slow-start")) { await Bun.sleep(800); console.log("startup settled"); }
+let working;
 for await (const line of createInterface({input: process.stdin})) {
-  if (line === "work") console.log("working output");
+  if (line === "work") working = setInterval(() => console.log("working output"), 100);
   if (line === "done") {
+    clearInterval(working);
     const payload = {type: "agent-turn-complete", "thread-id": "test-thread", "turn-id": "test-turn", cwd: process.cwd(), "input-messages": ["hi"], "last-assistant-message": "hi"};
     const child = Bun.spawn([...notify, JSON.stringify(payload)], {
       env: {...process.env, PATH: "/usr/bin:/bin"}, stdin: "ignore", stdout: "pipe", stderr: "pipe",
@@ -128,7 +130,7 @@ test("Codex launch, startup settle, output, notify and redraw use the absolute h
   await eventually(() => row(terminal).status === "idle");
   expect(Date.now() - started).toBeGreaterThanOrEqual(2800);
   send(terminal, "work");
-  await eventually(() => row(terminal).status === "working", 1100);
+  await eventually(() => row(terminal).status === "working", 3500);
   send(terminal, "done");
   await eventually(() => row(terminal).status === "idle", 1100);
   await Bun.sleep(1500);
@@ -139,7 +141,7 @@ test("Codex launch, startup settle, output, notify and redraw use the absolute h
   await Bun.sleep(1500);
   expect(row(terminal).status).toBe("idle");
   send(terminal, "work");
-  await eventually(() => row(terminal).status === "working", 1100);
+  await eventually(() => row(terminal).status === "working", 3500);
   const beforeExit = row(terminal);
   process.kill(beforeExit.pid!, "SIGKILL");
   await eventually(() => row(terminal).state === "exited");
@@ -148,7 +150,7 @@ test("Codex launch, startup settle, output, notify and redraw use the absolute h
   expect(row(terminal).status).toBe("working");
   expect(app.state.listEvents().filter(e => e.type === "terminal.status").map(e => (e.payload as {newStatus: string}).newStatus))
     .toEqual(["starting", "idle", "working", "idle", "working"]);
-}, 12000);
+}, 16000);
 
 for (const runtime of ["codex", "claude-code"] as const) {
   test(`${runtime} respawn returns to starting and exit keeps status; shells stay statusless`, async () => {

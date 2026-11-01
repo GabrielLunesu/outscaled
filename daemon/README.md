@@ -79,17 +79,23 @@ The original command is stored unchanged, and no Codex config files are edited.
 `agent-turn-complete` notifications report `idle`. Every 500 ms the supervisor
 checks `pane_output_generation` where tmux provides it, otherwise it checks
 `window_activity` for that pane's window (one-second resolution, including tmux
-3.6). The fallback cannot distinguish output batches within the same second.
-New output after idle reports `working`, with a one-second grace period after
-notify for Codex's final redraw.
+3.6). An idle Codex terminal reports `working` only after three consecutive
+polls with new output (about 1.5 seconds). A poll without output breaks the
+streak, so isolated late MCP/plugin redraws and brief typing stay idle.
+The activity fallback cannot distinguish output batches within the same second:
+it requires three consecutive activity seconds instead (about 2–3 seconds),
+without counting repeated reads of the same timestamp as more output.
+There is also a one-second grace period after notify for Codex's final redraw.
 The same poll reads the session's attached-client count and pane width/height.
 A change starts a one-second redraw grace period: output during it leaves an
-idle Codex terminal idle. Output continuing past the grace period, or a later
-prompt, reports `working` as usual; API submissions set `working` immediately.
+idle Codex terminal idle. Both grace periods clear the output streak; sustained
+output after grace reports `working`. API submissions set `working` immediately.
 Fresh Codex terminals become `idle` after about two seconds without output.
 The activity fallback allows up to one extra second for timestamp uncertainty.
-Composer redraws while typing also count as output; this fallback cannot
-reliably distinguish them from agent output.
+Sustained typing can still look like agent output; this heuristic cannot
+reliably distinguish them.
+Codex can also keep rendering a completed reply beyond notify grace; that
+output still reports `working` if it meets the sustained-output threshold.
 
 Agent status starts at `starting` and is independent of process state. An
 always-on agent returns to `starting` when respawned; exited and crashed agents

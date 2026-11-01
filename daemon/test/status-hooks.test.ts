@@ -5,6 +5,7 @@ import { Terminal } from "@outscaled/protocol";
 import { createHooksRoute } from "../src/routes/hooks";
 import { startServer } from "../src/server";
 import { shellQuote, terminalRuntime } from "../src/terminals";
+import { Tmux } from "../src/tmux";
 import { fixture, terminal, workspace } from "./helpers";
 
 let f: ReturnType<typeof fixture>;
@@ -115,7 +116,9 @@ await Bun.sleep(600000);
 });
 
 test("each hook changes status and time once, stores events atomically and ignores idle reminders", async () => {
-  app.state.insertTerminal({ ...terminal, runtime: "claude-code" });
+  // Keep the fixture alive while CLI hooks run, even across supervisor polls.
+  const pid = await new Tmux(f.config.tmuxSocket).createSession(terminal.session, f.root, "/bin/sh", "sleep 600");
+  app.state.insertTerminal({ ...terminal, pid, runtime: "claude-code" });
   let previous: string | null = null;
   let changes = 0;
   let needsInput = 0;

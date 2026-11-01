@@ -102,7 +102,7 @@ function pane(index = 0): TmuxPane {
   };
 }
 
-test("activity fallback settles startup and absorbs notify redraws across second boundaries", async () => {
+test("activity fallback allows a full timestamp bucket before startup settles", async () => {
   const source = pane();
   const watch = observe([source]);
   await watch.sample(10_900);
@@ -115,97 +115,164 @@ test("activity fallback settles startup and absorbs notify redraws across second
   expect(watch.status()).toBe("starting");
   await watch.sample(15_000);
   expect(watch.status()).toBe("idle");
-  source.windowActivity = 15;
-  await watch.sample(15_200);
-  expect(watch.status()).toBe("working");
-  watch.notify(15_990);
-  expect(watch.status()).toBe("idle");
-  source.windowActivity = 16; // The final redraw crosses into a new second.
-  await watch.sample(16_100);
-  expect(watch.status()).toBe("idle");
-  await watch.sample(17_100); // Grace expired; the absorbed redraw stays absorbed.
-  expect(watch.status()).toBe("idle");
-  watch.notify(17_990); // An already-idle notification must renew grace too.
-  source.windowActivity = 18;
-  await watch.sample(18_100);
-  expect(watch.status()).toBe("idle");
-  await watch.sample(19_100);
-  expect(watch.status()).toBe("idle");
-  source.windowActivity = 20;
-  await watch.sample(20_100);
-  expect(watch.status()).toBe("working");
-  expect(state.listEvents().filter(event => event.type === "terminal.status").map(event => (event.payload as {newStatus: string}).newStatus))
-    .toEqual(["starting", "idle", "working", "idle", "working"]);
 });
 
-test("generation takes precedence, including zero, while another pane falls back to activity", async () => {
-  const modern = { ...pane(), outputGeneration: 0 };
-  const older = pane(1);
-  const watch = observe([modern, older], "idle");
+test("generation takes precedence over activity, including zero", async () => {
+  const source = { ...pane(), outputGeneration: 0 };
+  const watch = observe([source], "idle");
   await watch.sample(10_900);
-  modern.windowActivity = older.windowActivity = 11;
-  await watch.sample(11_100);
+  for (const time of [11_100, 11_600, 12_100]) {
+    source.windowActivity++;
+    await watch.sample(time);
+    expect(watch.status()).toBe("idle");
+  }
+  for (const time of [12_600, 13_100, 13_600]) {
+    source.outputGeneration++;
+    await watch.sample(time);
+    expect(watch.status()).toBe(time === 13_600 ? "working" : "idle");
+  }
+});
+
+test("generation requires three consecutive 500 ms output polls per pane", async () => {
+  const source = { ...pane(), outputGeneration: 0 };
+  const other = { ...pane(1), outputGeneration: 0 };
+  const watch = observe([source, other], "idle");
+  await watch.sample(10_900);
+  for (const time of [11_400, 11_900]) {
+    source.outputGeneration++;
+    await watch.sample(time);
+    expect(watch.status()).toBe("idle");
+  }
+  await watch.sample(12_400); // Silence discards both preceding observations.
+  for (const time of [12_900, 13_400, 13_900]) {
+    source.outputGeneration++;
+    await watch.sample(time);
+    expect(watch.status()).toBe(time === 13_900 ? "working" : "idle");
+    expect(watch.status(1)).toBe("idle");
+  }
+});
+
+test("a new Codex process does not inherit a previous output streak", async () => {
+  const source = { ...pane(), outputGeneration: 0 };
+  const watch = observe([source], "idle");
+  await watch.sample(10_900);
+  for (const time of [11_400, 11_900]) {
+    source.outputGeneration++;
+    await watch.sample(time);
+  }
+  source.pid++;
+  source.outputGeneration++;
+  await watch.sample(12_400);
   expect(watch.status()).toBe("idle");
-  expect(watch.status(1)).toBe("working");
-  modern.outputGeneration = 1; // Output within the same activity second.
-  await watch.sample(11_200);
-  expect(watch.status()).toBe("working");
+  for (const time of [12_900, 13_400, 13_900]) {
+    source.outputGeneration++;
+    await watch.sample(time);
+    expect(watch.status()).toBe(time === 13_900 ? "working" : "idle");
+  }
+});
+
+for (const offset of [100, 600, 990]) {
+  test(`activity fallback requires three consecutive activity seconds at offset ${offset}`, async () => {
+    const source = pane();
+    const watch = observe([source], "idle");
+    await watch.sample(10_900);
+    for (let index = 0; index < 5; index++) {
+      const time = 11_000 + offset + index * 500;
+      source.windowActivity = Math.floor(time / 1000); // Output every 500 ms.
+      await watch.sample(time);
+      expect(watch.status()).toBe(source.windowActivity >= 13 ? "working" : "idle");
+    }
+  });
+}
+
+test("activity fallback discards a streak after silence or skipped activity seconds", async () => {
+  const source = pane();
+  const other = pane(1);
+  const watch = observe([source, other], "idle");
+  await watch.sample(10_900);
+  for (const time of [11_100, 11_600, 12_100, 12_600]) {
+    source.windowActivity = Math.floor(time / 1000);
+    await watch.sample(time);
+    expect(watch.status()).toBe("idle");
+  }
+  await watch.sample(13_100); // An expired unchanged bucket breaks the streak.
+  for (const time of [14_100, 14_600, 15_100, 15_600, 16_100]) {
+    source.windowActivity = Math.floor(time / 1000);
+    await watch.sample(time);
+    expect(watch.status()).toBe(time === 16_100 ? "working" : "idle");
+    expect(watch.status(1)).toBe("idle");
+  }
 });
 
 for (const generation of [0, null]) {
   const path = generation === null ? "activity fallback" : "generation";
-  const changes = {
-    attach: { attachedClients: 2 },
-    detach: { attachedClients: 0 },
-    width: { width: 120 },
-    height: { height: 40 },
-  };
-  const output = (source: TmuxPane, time: number) => {
+  const emit = (source: TmuxPane, time: number) => {
     if (source.outputGeneration !== null) source.outputGeneration++;
     source.windowActivity = Math.floor(time / 1000);
   };
 
-  for (const [change, fields] of Object.entries(changes)) {
-    test(`${path}: idle Codex absorbs ${change} redraws, then detects later work`, async () => {
+  for (const [change, fields] of Object.entries({
+    attach: { attachedClients: 2 }, detach: { attachedClients: 0 },
+    width: { width: 120 }, height: { height: 40 },
+  })) {
+    test(`${path}: ${change} redraws during and after grace stay idle`, async () => {
       const source = { ...pane(), outputGeneration: generation };
       const watch = observe([source], "idle");
       await watch.sample(10_900);
       Object.assign(source, fields);
-      output(source, 11_990);
-      await watch.sample(11_990); // Layout change and output arrive in the same poll.
+      for (const time of [11_990, 12_490, 12_990, 13_490]) {
+        emit(source, time);
+        await watch.sample(time);
+        expect(watch.status()).toBe("idle");
+      }
+      await watch.sample(13_990); // Silence breaks the output streak.
+      emit(source, 15_490); // A late redraw well outside grace is still harmless.
+      await watch.sample(15_490);
+      await watch.sample(15_990);
       expect(watch.status()).toBe("idle");
-      output(source, 12_490); // A later redraw also crosses an activity second.
-      await watch.sample(12_490);
-      expect(watch.status()).toBe("idle");
-      await watch.sample(13_490); // Expiring grace must not replay absorbed output.
-      expect(watch.status()).toBe("idle");
-      output(source, 14_100); // A prompt/output after grace still starts work.
-      await watch.sample(14_100);
-      expect(watch.status()).toBe("working");
-      expect(state.listEvents().filter(event => event.type === "terminal.status").map(event => (event.payload as {newStatus: string}).newStatus))
-        .toEqual(["idle", "working"]);
     });
   }
 
-  test(`${path}: delayed redraw grace is per pane and sustained output outlasts it`, async () => {
+  test(`${path}: isolated late output and brief typing do not accumulate`, async () => {
     const source = { ...pane(), outputGeneration: generation };
-    const other = { ...pane(1), outputGeneration: generation };
-    const watch = observe([source, other], "idle");
+    const watch = observe([source], "idle");
     await watch.sample(10_900);
-    source.attachedClients++;
-    await watch.sample(11_990); // No output yet; change alone must start grace.
+    for (const start of [12_100, 17_100, 22_100]) {
+      emit(source, start);
+      await watch.sample(start);
+      emit(source, start + 500); // At most two polls of composer output.
+      await watch.sample(start + 500);
+      await watch.sample(start + 1000);
+      await watch.sample(start + 1500);
+      expect(watch.status()).toBe("idle");
+    }
+    expect(state.listEvents().filter(event => event.type === "terminal.status")).toHaveLength(1);
+  });
+
+  test(`${path}: notify clears prior output evidence and a later burst stays idle`, async () => {
+    const source = { ...pane(), outputGeneration: generation };
+    const watch = observe([source], "idle");
+    await watch.sample(10_900);
+    for (const time of [11_100, 11_600]) {
+      emit(source, time);
+      await watch.sample(time);
+    }
+    watch.notify(11_990);
+    for (const time of [12_100, 12_600, 13_100, 13_600]) {
+      emit(source, time);
+      await watch.sample(time);
+      expect(watch.status()).toBe("idle");
+    }
+    await watch.sample(14_100);
+    emit(source, 16_100); // A single burst after notify grace must not start work.
+    await watch.sample(16_100);
+    await watch.sample(16_600);
+    await watch.sample(17_100);
     expect(watch.status()).toBe("idle");
-    output(source, 12_490);
-    output(other, 12_490);
-    await watch.sample(12_490);
+    watch.notify(17_990); // Duplicate idle notify also renews grace.
+    emit(source, 18_100);
+    await watch.sample(18_100);
+    await watch.sample(19_100);
     expect(watch.status()).toBe("idle");
-    expect(watch.status(1)).toBe("working");
-    output(source, 12_989);
-    await watch.sample(12_989);
-    expect(watch.status()).toBe("idle");
-    // Crossing the next second makes continued output visible to older tmux.
-    output(source, 13_000);
-    await watch.sample(13_000);
-    expect(watch.status()).toBe("working");
   });
 }

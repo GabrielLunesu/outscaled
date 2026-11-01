@@ -3,6 +3,8 @@ import type { State } from "./state";
 import type { Terminals } from "./terminals";
 import type { Tmux, TmuxPane } from "./tmux";
 
+const CODEX_WORKING_OUTPUT_OBSERVATIONS = 3;
+
 export interface SupervisorOptions {
   backoffMs?: readonly number[];
   healthyUptimeMs?: number;
@@ -25,6 +27,7 @@ interface OutputWatch {
   width: number;
   height: number;
   redrawGraceUntil: number;
+  outputStreak: number;
 }
 
 export class Supervisor {
@@ -111,7 +114,7 @@ export class Supervisor {
     if (!watch || watch.pid !== pane.pid) {
       watch = {
         pid: pane.pid, generation: pane.outputGeneration, activity: pane.windowActivity, lastOutputAt: outputAt,
-        attachedClients: pane.attachedClients, width: pane.width, height: pane.height, redrawGraceUntil: 0,
+        attachedClients: pane.attachedClients, width: pane.width, height: pane.height, redrawGraceUntil: 0, outputStreak: 0,
       };
       this.outputWatches.set(terminal.id, watch);
     }
@@ -126,15 +129,32 @@ export class Supervisor {
     const output = pane.outputGeneration === null
       ? watch.activity !== pane.windowActivity
       : watch.generation !== pane.outputGeneration;
+    const previousActivity = watch.activity;
     watch.generation = pane.outputGeneration;
     watch.activity = pane.windowActivity;
     if (output) {
       watch.lastOutputAt = outputAt;
     }
+    const canStartWork = terminal.status === "idle" && now >= watch.redrawGraceUntil &&
+      !this.terminals.codexInNotifyGrace(terminal, now);
+    // Sporadic redraws (including late MCP/plugin output and brief typing) are
+    // not turns. Require consecutive output observations outside either grace.
+    if (!canStartWork) {
+      watch.outputStreak = 0;
+    } else if (pane.outputGeneration !== null) {
+      watch.outputStreak = output ? watch.outputStreak + 1 : 0;
+    } else if (output) {
+      // Older tmux only proves activity once per second. Count consecutive
+      // activity seconds, not repeated reads of the same timestamp as output.
+      watch.outputStreak = pane.windowActivity === previousActivity + 1 ? watch.outputStreak + 1 : 1;
+    } else if (now >= (pane.windowActivity + 1) * 1000) {
+      // An unchanged timestamp within its current bucket is inconclusive;
+      // once the bucket ends, a poll without a new timestamp breaks the streak.
+      watch.outputStreak = 0;
+    }
     if (terminal.status === "starting") {
       if (now - watch.lastOutputAt >= 2000) this.state.updateTerminalStatus(terminal.id, "idle");
-    } else if (terminal.status === "idle" && output && now >= watch.redrawGraceUntil &&
-        !this.terminals.codexInNotifyGrace(terminal, now)) {
+    } else if (watch.outputStreak >= CODEX_WORKING_OUTPUT_OBSERVATIONS) {
       this.state.updateTerminalStatus(terminal.id, "working");
     }
   }
