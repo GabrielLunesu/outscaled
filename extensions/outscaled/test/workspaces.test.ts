@@ -112,9 +112,29 @@ test('selection event exposes previous and current workspace for terminal grid c
 	const b = { host: 'remote', slug: 'demo', root: 'ws://remote/demo/' };
 	const selection = new WorkspaceSelection(a);
 	let change: unknown;
-	selection.onDidChangeSelectedWorkspace(event => { change = event; });
+	selection.onDidChangeSelectedWorkspace(({ previous, current }) => { change = { previous, current }; });
 	selection.select(b);
 	assert.deepEqual(change, { previous: a, current: b });
 	assert.deepEqual(selection.current, b);
+	selection.dispose();
+});
+
+
+test('switch barriers await snapshot/detach before selection and restoration before resolving', async () => {
+	const a = { host: 'local', slug: 'a', root: 'file:///test/a' };
+	const b = { host: 'remote', slug: 'b', root: 'ws://remote/b/' };
+	const selection = new WorkspaceSelection(a);
+	const order: string[] = [];
+	selection.onWillChangeSelectedWorkspace(event => {
+		assert.deepEqual(selection.current, a);
+		event.waitUntil(Promise.resolve().then(() => { order.push('record/detach'); }));
+	});
+	selection.onDidChangeSelectedWorkspace(event => {
+		assert.deepEqual(selection.current, b);
+		event.waitUntil(Promise.resolve().then(() => { order.push('restore'); }));
+	});
+	await selection.prepare(b); order.push('root switch');
+	await selection.select(b); order.push('editors');
+	assert.deepEqual(order, ['record/detach', 'root switch', 'restore', 'editors']);
 	selection.dispose();
 });

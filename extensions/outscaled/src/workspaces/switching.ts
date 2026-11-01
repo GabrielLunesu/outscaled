@@ -79,9 +79,10 @@ export function registerWorkspaceSwitching(context: vscode.ExtensionContext, ser
 		}
 		if (sameRoot(selection.current?.root, next.root) && selection.current?.host === next.host && selection.current.slug === next.slug) return;
 		const previous = selection.current;
+		const tabs = previous ? remember(previous) : [];
+		await selection.prepare(next);
 		log(`Switching root: ${previous?.root} -> ${next.root}`);
 		if (previous) {
-			const tabs = remember(previous);
 			await context.workspaceState.update(editorsKey, memory.serialize());
 			// Dirty tabs are deliberately left open, even after their root is removed.
 			await vscode.window.tabGroups.close(tabs, true);
@@ -100,6 +101,7 @@ export function registerWorkspaceSwitching(context: vscode.ExtensionContext, ser
 		}
 		await context.globalState.update(selectionKey, next);
 		log(`Selected root: ${next.root}`);
+		await selection.select(next);
 		// Open the active tab last so focus follows the remembered workspace.
 		for (const editor of memory.recall(next).sort((a, b) => Number(a.active) - Number(b.active))) {
 			const alreadyOpen = vscode.window.tabGroups.all.some(group => group.tabs.some(tab => {
@@ -114,7 +116,6 @@ export function registerWorkspaceSwitching(context: vscode.ExtensionContext, ser
 				else await vscode.commands.executeCommand('vscode.open', vscode.Uri.parse(editor.uri), options);
 			} catch (error) { void vscode.window.showWarningMessage(`Could not restore ${editor.uri}: ${String(error)}`); }
 		}
-		selection.select(next);
 	};
 	context.subscriptions.push(selection, vscode.commands.registerCommand('outscaled.switchWorkspace', (target?: WorkspaceLocation) => {
 		queue = queue.then(async () => {

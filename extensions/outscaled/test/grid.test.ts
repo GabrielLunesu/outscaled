@@ -13,7 +13,7 @@ import { layouts, presets, expandPreset, EditorGroupLayout } from '../src/grid/p
 import { ensureTerminal } from '../src/grid/daemonTerminals';
 import { findWsPath, attachArgs, attachEnv } from '../src/grid/wsPath';
 import { tabStatus, TabStatusChanges } from '../src/grid/status';
-import { GridMemory } from '../src/grid/memory';
+import { GridMemory, recordGrid, restorePlan } from '../src/grid/memory';
 
 // Interpret the public editor-layout contract into physical rectangles, without
 // assuming that columns and reading order coincide for arbitrary nested layouts.
@@ -143,4 +143,51 @@ test('grid memory persists layout, daemon identity and group by workspace withou
 	assert.equal(restored.recall({ ...workspace, host: 'example-alias' })!.panes.length, 0);
 	restored.recall(workspace)!.panes.pop();
 	assert.equal(restored.recall(workspace)!.panes[3].terminalId, 'id-3');
+});
+
+
+test('record actual groups, tab order, moved panes and closed panes without including unrelated tabs', () => {
+	const a = {}, b = {}, closed = {}, text = {}, unrelatedTerminal = {};
+	const layout = { orientation: 0 as const, groups: [{ size: .3 }, { size: .7 }] };
+	const panes = [a, b, closed].map((tab, index) => ({ tab, pane: { name: `pane-${index}`, terminalId: `id-${index}`, viewColumn: index + 1 } }));
+	const grid = recordGrid(layout, [
+		{ viewColumn: 1, tabs: [text, unrelatedTerminal] },
+		{ viewColumn: 2, tabs: [b, a] }
+	], panes);
+	assert.deepEqual(grid, { layout, preset: undefined, panes: [
+		{ name: 'pane-1', terminalId: 'id-1', viewColumn: 2 },
+		{ name: 'pane-0', terminalId: 'id-0', viewColumn: 2 }
+	] });
+	layout.groups[0].size = .5;
+	assert.equal(grid.layout.groups[0].size, .3);
+	assert.deepEqual(recordGrid(layout, [{ viewColumn: 1, tabs: [] }], panes).panes, []);
+});
+
+test('restore plan keeps layout and only original running daemon sessions; never replaces missing or exited agents', () => {
+	const panes = ['running', 'missing', 'exited', 'crashed', 'restarting', 'replaced'].map((name, index) =>
+		({ name, command: 'codex', terminalId: `id-${index}`, viewColumn: index % 4 + 1 }));
+	const grid = { layout: layouts[3].editor, preset: presets[0].id, panes };
+	const terminals = panes.filter(pane => pane.name !== 'missing').map(pane => ({ ...terminal, name: pane.name,
+		id: pane.name === 'replaced' ? 'new-id' : pane.terminalId,
+		state: (['exited', 'crashed', 'restarting'].includes(pane.name) ? pane.name : 'running') as Terminal['state'] }));
+	const plan = restorePlan(grid, terminals);
+	assert.deepEqual(plan, { ...grid, panes: [panes[0]] });
+	assert.deepEqual(restorePlan(grid, []).panes, []);
+	plan.layout.groups.pop(); plan.panes[0].viewColumn = 9;
+	assert.equal(grid.layout.groups.length, 2); assert.equal(grid.panes[0].viewColumn, 1);
+});
+
+test('recorded grids survive JSON persistence including resized nested layout, multiple tabs and empty grids', () => {
+	const memory = new GridMemory();
+	const a = {}, b = {};
+	const layout = { orientation: 1 as const, groups: [{ size: .4, groups: [{ size: .2 }, { size: .8 }] }, { size: .6 }] };
+	const grid = recordGrid(layout, [{ viewColumn: 2, tabs: [a, b] }], [a, b].map((tab, index) =>
+		({ tab, pane: { name: `codex-${index}`, command: 'codex', terminalId: `session-${index}`, viewColumn: 1 } })));
+	memory.remember(workspace, grid);
+	memory.remember({ ...workspace, host: 'remote' }, { layout: layouts[1].editor, panes: [] });
+	const serialized = JSON.parse(JSON.stringify(memory.serialize()));
+	const restored = new GridMemory(serialized);
+	assert.deepEqual(restored.recall(workspace), JSON.parse(JSON.stringify(grid)));
+	assert.deepEqual(restored.recall({ ...workspace, host: 'remote' })!.panes, []);
+	assert.equal(restored.recall({ ...workspace, slug: 'unknown' }), undefined);
 });
