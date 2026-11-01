@@ -21,6 +21,7 @@ export class Connection {
 	private dirty = false;
 	private pending: StreamMessage[] = [];
 	private readonly backoff = new Backoff();
+	private readiness?: { promise: Promise<void>; resolve(): void; reject(error: Error): void; timer: NodeJS.Timeout };
 
 	constructor(host: string, private readonly changed: () => void, private readonly report: (error: string) => void,
 		private readonly recovered: () => void = () => {}) {
@@ -108,6 +109,7 @@ export class Connection {
 				]);
 				if (generation !== this.generation) return;
 				Object.assign(this.state, { health, workspaces, terminals, online: true, error: undefined });
+				this.settleReadiness();
 				// Replay live changes over the HTTP snapshot, then refetch membership if needed.
 				for (const message of this.pending.splice(0)) this.dirty = applyMessage(this.state, message) || this.dirty;
 				this.backoff.reset();
@@ -127,5 +129,34 @@ export class Connection {
 		else { this.cancel(); this.connect(); }
 	}
 
-	dispose(): void { this.stopped = true; this.cancel(); }
+	/** Use the current tunnel endpoint and cancel requests when it is replaced. */
+	async request(path: string, init: RequestInit = {}): Promise<Response> {
+		if (this.stopped) throw new Error('Connection stopped');
+		// Restored editors can request files before config, SSH and the first snapshot
+		// are ready. Share one bounded wait, without opening another connection.
+		if (!this.state.online) {
+			if (!this.readiness) {
+				let resolve!: () => void;
+				let reject!: (error: Error) => void;
+				const promise = new Promise<void>((yes, no) => { resolve = yes; reject = no; });
+				const timer = setTimeout(() => this.settleReadiness(new Error('Server offline')), 10000);
+				this.readiness = { promise, resolve, reject, timer };
+			}
+			await this.readiness.promise;
+		}
+		if (this.stopped || !this.url || !this.controller) throw new Error('Server offline');
+		return fetch(`${this.url}/v1/${path}`, { ...init,
+			signal: AbortSignal.any([this.controller.signal, AbortSignal.timeout(10000)]) });
+	}
+
+	private settleReadiness(error?: Error): void {
+		const pending = this.readiness;
+		this.readiness = undefined;
+		if (!pending) return;
+		clearTimeout(pending.timer);
+		if (error) pending.reject(error);
+		else pending.resolve();
+	}
+
+	dispose(): void { this.stopped = true; this.settleReadiness(new Error('Connection stopped')); this.cancel(); }
 }

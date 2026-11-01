@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import { Terminal, Workspace } from '@outscaled/protocol';
 import { DaemonService } from '../daemon/service';
 import { needsYou, ServerState } from '../daemon/state';
+import { WorkspaceSelection } from './selection';
 
 type Node = { kind: 'server'; server: ServerState }
 	| { kind: 'workspace'; server: ServerState; workspace: Workspace }
@@ -21,7 +22,7 @@ function terminalIcon(terminal: Terminal): vscode.ThemeIcon {
 	return new vscode.ThemeIcon('circle-filled', new vscode.ThemeColor(terminal.status === 'needs_input' ? 'testing.iconFailed' : 'descriptionForeground'));
 }
 
-export function registerWorkspacesView(context: vscode.ExtensionContext, service: DaemonService): void {
+export function registerWorkspacesView(context: vscode.ExtensionContext, service: DaemonService, selection: WorkspaceSelection): void {
 	const changes = new vscode.EventEmitter<Node | undefined>();
 	const tree = vscode.window.createTreeView<Node>('outscaled.workspaces', {
 		treeDataProvider: {
@@ -48,9 +49,12 @@ export function registerWorkspacesView(context: vscode.ExtensionContext, service
 					const item = new vscode.TreeItem(node.workspace.slug, vscode.TreeItemCollapsibleState.Expanded);
 					item.id = `workspace:${JSON.stringify([node.server.host, node.workspace.slug])}`;
 					item.contextValue = 'outscaled.workspace';
-					item.iconPath = new vscode.ThemeIcon('folder');
+					const selected = selection.current?.host === node.server.host && selection.current.slug === node.workspace.slug;
+					item.iconPath = new vscode.ThemeIcon(selected ? 'folder-opened' : 'folder');
+					item.command = { command: 'outscaled.switchWorkspace', title: vscode.l10n.t('Switch Workspace'),
+						arguments: [{ host: node.server.host, slug: node.workspace.slug }] };
 					const count = needsYou(node.server.terminals.filter(t => t.workspace === node.workspace.slug));
-					item.description = count ? vscode.l10n.t('{0} need you', count) : undefined;
+					item.description = [selected ? vscode.l10n.t('selected') : '', count ? vscode.l10n.t('{0} need you', count) : ''].filter(Boolean).join(' · ') || undefined;
 					item.tooltip = [node.workspace.path, node.workspace.repo].filter(Boolean).join('\n');
 					return item;
 				}
@@ -75,7 +79,7 @@ export function registerWorkspacesView(context: vscode.ExtensionContext, service
 			: vscode.l10n.t('No workspaces found. Start wsd locally or add SSH hosts to your Outscaled servers.toml.');
 		void vscode.commands.executeCommand('setContext', 'outscaled.hasWorkspaces', service.servers.some(s => s.workspaces.length > 0));
 	};
-	context.subscriptions.push(changes, tree, service.onDidChange(update),
+	context.subscriptions.push(changes, tree, service.onDidChange(update), selection.onDidChangeSelectedWorkspace(update),
 		vscode.commands.registerCommand('outscaled.workspaces.refresh', () => service.refresh()));
 	update();
 }
