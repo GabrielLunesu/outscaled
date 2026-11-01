@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-// Hermetic sidebar and workspace-switch acceptance check. From the repo root:
+// Hermetic sidebar, workspace-switch and terminal-grid acceptance check. From the repo root:
 //   cd daemon && ../scripts/serial.sh bun run build
 //   scripts/serial.sh node extensions/outscaled/test/ui.mts
 // Builds must already be current. No real daemon, SSH target or user config is used.
@@ -21,7 +21,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const require = createRequire(join(root, 'package.json'));
 const { _electron } = require('playwright-core');
 const product = require(join(root, 'product.json'));
-const evidence = resolve(process.argv[2] ?? join(root, '.agent-validation/switch'));
+const evidence = resolve(process.argv[2] ?? join(root, '.agent-validation/grid'));
 mkdirSync(evidence, { recursive: true });
 if (process.env.UI_INSPECT_LAUNCH) rmSync(join(evidence, 'launch-inspected'), { force: true });
 const temporary = mkdtempSync(join(tmpdir(), 'outscaled-ui-'));
@@ -83,7 +83,7 @@ async function capture(name: string) {
 const row = (name: string) => win.locator('.sidebar .monaco-list-row').filter({ hasText: name });
 
 try {
-	writeFileSync(join(bin, 'claude'), '#!/bin/sh\nexec /bin/sleep 3600\n', { mode: 0o755 });
+	for (const agent of ['claude', 'codex']) writeFileSync(join(bin, agent), `#!/bin/sh\necho 'fake ${agent} ready'\nexec /bin/sleep 3600\n`, { mode: 0o755 });
 	writeFileSync(join(bin, 'ssh'), `#!${process.execPath}
 const {appendFileSync}=require('node:fs');
 const {connect,createServer}=require('node:net');
@@ -118,9 +118,9 @@ createServer(socket=>{const remote=connect({host:'127.0.0.1',port:Number(process
 	}
 	const profile = join(temporary, 'profile');
 	mkdirSync(join(profile, 'data/User'), { recursive: true });
-	writeFileSync(join(profile, 'data/User/settings.json'), JSON.stringify({ 'window.title': 'Outscaled sidebar acceptance', 'workbench.startupEditor': 'none', 'workbench.secondarySideBar.defaultVisibility': 'hidden', 'window.confirmSaveUntitledWorkspace': false, 'files.simpleDialog.enable': true }));
+	writeFileSync(join(profile, 'data/User/settings.json'), JSON.stringify({ 'window.title': 'Outscaled sidebar acceptance', 'workbench.startupEditor': 'none', 'workbench.secondarySideBar.defaultVisibility': 'hidden', 'window.confirmSaveUntitledWorkspace': false, 'files.simpleDialog.enable': true, 'outscaled.wsPath': join(root, 'daemon/dist/ws'), 'editor.accessibilitySupport': 'on', 'explorer.compactFolders': false, 'terminal.integrated.confirmOnKill': 'never' }));
 	const env = { ...process.env, NODE_ENV: 'development', VSCODE_DEV: '1', VSCODE_CLI: '1',
-		WSD_PORT: String(daemons[0].port), OUTSCALED_CONFIG_DIR: config, PATH: `${bin}:${process.env.PATH}`,
+		WSD_PORT: String(daemons[0].port), WSD_TMUX_SOCKET: daemons[0].env.WSD_TMUX_SOCKET, OUTSCALED_CONFIG_DIR: config, PATH: `${bin}:${process.env.PATH}`,
 		TEST_REMOTE_PORT: String(daemons[1].port), TEST_SSH_LOG: sshLog };
 	delete env.ELECTRON_RUN_AS_NODE;
 	delete env.GIT_CONFIG_COUNT;
@@ -133,6 +133,7 @@ createServer(socket=>{const remote=connect({host:'127.0.0.1',port:Number(process
 			'--disable-updates', '--disable-extension=vscode.vscode-api-tests', '--disable-extension=vscode.json-language-features'], env, timeout: 120000
 	});
 	win = await app.firstWindow();
+	win.setDefaultTimeout(30000);
 	await win.waitForSelector('.monaco-workbench', { timeout: 120000 });
 	await win.screenshot({ path: join(evidence, '00-launched.png') });
 	// Optional review gate lets the caller inspect the real launch before interaction.
@@ -189,10 +190,10 @@ createServer(socket=>{const remote=connect({host:'127.0.0.1',port:Number(process
 	const sshBeforeSwitch = readFileSync(sshLog, 'utf8').trim().split('\n').length;
 	await explorer();
 	await until(async () => (await win.locator('.sidebar').innerText()).includes('vps-demo'), 'remote explorer root');
-	await row('vps-demo').dblclick();
-	await row('src').dblclick();
-	// Compact folders can combine src/nested into a single row.
-	if (await row('nested').count() && !(await row('hello.txt').count())) await row('nested').dblclick();
+	if (await row('vps-demo').locator('.monaco-tl-twistie.collapsed').count()) await row('vps-demo').locator('.monaco-tl-twistie').click();
+	await row('src').locator('.monaco-tl-twistie').click();
+	await row('nested').waitFor();
+	await row('nested').locator('.monaco-tl-twistie').click();
 	await until(async () => await row('hello.txt').count() === 1, 'remote nested file');
 	await row('hello.txt').dblclick();
 	await win.locator('.editor-instance .view-lines').filter({ hasText: 'remote file' }).waitFor();
@@ -214,7 +215,7 @@ createServer(socket=>{const remote=connect({host:'127.0.0.1',port:Number(process
 	await until(async () => await win.locator('.tabs-container .tab').filter({ hasText: 'hello.txt' }).count() === 0, 'remote editor closed on local switch');
 	await explorer();
 	await until(async () => (await win.locator('.sidebar').innerText()).includes('mac-demo'), 'local explorer root');
-	await row('mac-demo').dblclick();
+	if (await row('mac-demo').locator('.monaco-tl-twistie.collapsed').count()) await row('mac-demo').locator('.monaco-tl-twistie').click();
 	await until(async () => (await win.locator('.sidebar').innerText()).includes('README.md'), 'local files');
 	const localDocument = JSON.parse(readFileSync(join(config, 'outscaled.code-workspace'), 'utf8'));
 	const localFolder = localDocument.folders[1];
@@ -291,6 +292,81 @@ createServer(socket=>{const remote=connect({host:'127.0.0.1',port:Number(process
 	assert.equal(invocations.length, sshBeforeSwitch + 1); // Initial entry and deliberate reload may restart extensions.
 	assert.equal(invocations[0].args.at(-1), 'example-alias');
 	console.log('PASS: live sidebar, hooks, badges, terminal exit, offline/recovery and single tunnel');
+	// Real native editor terminals must attach through the built ws CLI.
+	await outscaled();
+	await row('mac-demo').locator('.label-name').click();
+	await selected('mac-demo');
+	const command = async (title: string) => {
+		await win.keyboard.press('F1');
+		await win.locator('.quick-input-widget input').fill(`>${title}`);
+		await win.locator('.quick-input-list .monaco-list-row').filter({ hasText: title }).first().waitFor();
+		await win.keyboard.press('Enter');
+	};
+	await command('View: Close All Editors');
+	const openGrid = async () => {
+		await command('Outscaled: Open Grid');
+		await win.locator('.quick-input-list .monaco-list-row').filter({ hasText: '2 Claude + 2 Codex' }).click();
+	};
+	const gridProof = () => win.locator('.editor-group-container').evaluateAll((groups: Element[]) => groups.map(group => {
+		const bounds = group.getBoundingClientRect();
+		return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height,
+			tabs: Array.from(group.querySelectorAll('.tabs-container .tab')).map(tab => ({
+				name: tab.querySelector('.label-name')?.textContent, label: tab.getAttribute('aria-label'),
+				icons: Array.from(tab.querySelectorAll('.codicon, .monaco-icon-label')).map(icon => ({
+					class: icon.className, color: getComputedStyle(icon).color, beforeColor: getComputedStyle(icon, '::before').color
+				})) })), text: (group.querySelector('.xterm-accessibility-tree') as HTMLElement | null)?.innerText ?? '' };
+	}));
+	await openGrid();
+	await until(async () => {
+		const groups = await gridProof();
+		return groups.length === 4 && groups.every((group: any) => group.tabs.length === 1 && /fake (claude|codex) ready/.test(group.text));
+	}, 'four attached panes with fake agent output');
+	const groups = (await gridProof()).sort((a: any, b: any) => a.y - b.y || a.x - b.x);
+	assert.deepEqual(groups.map((group: any) => group.tabs[0].name), ['claude-1', 'claude-2', 'codex-1', 'codex-2']);
+	assert.equal(groups[0].y, groups[1].y); assert.equal(groups[2].y, groups[3].y);
+	assert.equal(groups[0].x, groups[2].x); assert.equal(groups[1].x, groups[3].x);
+	assert.ok(groups[1].x > groups[0].x && groups[2].y > groups[0].y);
+	assert.ok(groups.every((group: any) => Math.abs(group.width - groups[0].width) <= 2 && Math.abs(group.height - groups[0].height) <= 2));
+	const names = ['claude-1', 'claude-2', 'codex-1', 'codex-2'];
+	const gridTerminals = (await request(0, 'workspaces/mac-demo/terminals')).filter((terminal: any) => names.includes(terminal.name));
+	assert.equal(gridTerminals.length, 4);
+	const sessions = spawnSync('tmux', ['-S', daemons[0].env.WSD_TMUX_SOCKET!, 'list-sessions', '-F', '#{session_name}'], { encoding: 'utf8' });
+	assert.equal(sessions.status, 0);
+	for (const terminal of gridTerminals) { assert.equal(terminal.state, 'running'); assert.ok(sessions.stdout.split('\n').includes(terminal.session)); }
+	writeFileSync(join(evidence, 'grid-proof.json'), JSON.stringify({ groups, terminals: gridTerminals.map(({ id, name, session }: any) => ({ id, name, session })), sessions: sessions.stdout }, null, 2));
+	await capture('13-grid-attached');
+	const claude = gridTerminals.find((terminal: any) => terminal.name === 'claude-1');
+	const tab = win.locator('.tabs-container .tab').filter({ hasText: 'claude-1' });
+	await request(0, 'hooks/claude-code', { terminal: claude.id, payload: { hook_event_name: 'Stop' } });
+	await until(async () => await tab.locator('.codicon-circle-filled').count() > 0, 'idle tab dot');
+	await capture('13b-grid-idle');
+	await request(0, 'hooks/claude-code', { terminal: claude.id, payload: { hook_event_name: 'UserPromptSubmit' } });
+	await until(async () => await tab.locator('[class*="codicon-loading~spin"]').count() > 0, 'live working tab spinner');
+	await until(async () => (await request(0, 'workspaces/mac-demo/terminals')).find((terminal: any) => terminal.id === claude.id)?.status === 'working', 'prompt hook status');
+	const working = await gridProof();
+	assert.ok(working.some((group: any) => group.tabs.some((tab: any) => tab.name === 'claude-1' && tab.icons.some((icon: any) => icon.color === 'rgb(13, 188, 121)' || icon.beforeColor === 'rgb(13, 188, 121)'))), 'working tab is green');
+	await capture('14-grid-working');
+	await request(0, 'hooks/claude-code', { terminal: claude.id, payload: { hook_event_name: 'Notification', notification_type: 'permission_prompt' } });
+	await until(async () => await tab.locator('.codicon-circle-filled').count() > 0, 'live needs-input tab dot');
+	const needsInput = await gridProof();
+	assert.ok(needsInput.some((group: any) => group.tabs.some((tab: any) => tab.name === 'claude-1' && tab.icons.some((icon: any) => icon.color === 'rgb(205, 49, 49)' || icon.beforeColor === 'rgb(205, 49, 49)'))), 'needs-input tab is red');
+	writeFileSync(join(evidence, 'grid-status-proof.json'), JSON.stringify({ working, needsInput }, null, 2));
+	await capture('15-grid-needs-input');
+	await command('View: Close All Editors');
+	await until(async () => await win.locator('.tabs-container .tab').count() === 0, 'grid closed');
+	await openGrid();
+	await until(async () => {
+		const groups = await gridProof();
+		return groups.length === 4 && groups.every((group: any) => group.tabs.length === 1 && /fake (claude|codex) ready/.test(group.text));
+	}, 'reattached grid');
+	const reused = (await request(0, 'workspaces/mac-demo/terminals')).filter((terminal: any) => names.includes(terminal.name));
+	assert.deepEqual(reused.map((terminal: any) => terminal.id).sort(), gridTerminals.map((terminal: any) => terminal.id).sort());
+	await win.locator('.tabs-container .tab').filter({ hasText: 'claude-1' }).click();
+	await row('codex-2').locator('.label-name').click();
+	await until(async () => await win.locator('.editor-group-container.active .tabs-container .tab.active').filter({ hasText: 'codex-2' }).count() === 1, 'sidebar focuses codex-2 pane');
+	await capture('16-grid-reused-focused');
+	writeFileSync(join(evidence, 'grid-reuse-proof.json'), JSON.stringify({ ids: reused.map((terminal: any) => terminal.id), groups: await gridProof() }, null, 2));
+	console.log('PASS: 2×2 attached grid, four daemon/tmux sessions, live green spinner/red dot, reuse and sidebar focus');
 	const logs: string[] = [];
 	const walk = (directory: string) => {
 		for (const entry of readdirSync(directory, { withFileTypes: true })) {

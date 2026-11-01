@@ -62,6 +62,8 @@ export function registerWorkspacesView(context: vscode.ExtensionContext, service
 				const item = new vscode.TreeItem(terminal.name);
 				item.id = `terminal:${JSON.stringify([node.server.host, terminal.id])}`;
 				item.contextValue = 'outscaled.terminal';
+				item.command = { command: 'outscaled.focusTerminal', title: vscode.l10n.t('Focus Terminal'),
+					arguments: [{ host: node.server.host, slug: terminal.workspace }, terminal.name] };
 				item.iconPath = terminalIcon(terminal);
 				item.description = terminal.state === 'running' ? (terminal.status === 'needs_input' ? vscode.l10n.t('needs you') : terminal.status ?? vscode.l10n.t('shell')) : terminal.state;
 				item.tooltip = `${terminal.command}\n${terminal.state}${terminal.status ? ` · ${terminal.status}` : ''}`;

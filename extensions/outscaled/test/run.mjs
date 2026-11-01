@@ -19,6 +19,10 @@ try {
 	await build({ entryPoints: [new URL('./workspaces.test.ts', import.meta.url).pathname], outfile: workspaceTests,
 		bundle: true, platform: 'node', format: 'cjs',
 		alias: { vscode: new URL('./vscode.ts', import.meta.url).pathname, '@outscaled/protocol': resolve('..', '..', 'protocol/src/index.ts'), zod: resolve('node_modules/zod') } });
-	const result = spawnSync(process.execPath, ['--test', outfile, workspaceTests], { stdio: 'inherit' });
+	const gridTests = join(temporary, 'grid.test.cjs');
+	await build({ entryPoints: [new URL('./grid.test.ts', import.meta.url).pathname], outfile: gridTests,
+		bundle: true, platform: 'node', format: 'cjs',
+		alias: { vscode: new URL('./vscode.ts', import.meta.url).pathname, '@outscaled/protocol': resolve('..', '..', 'protocol/src/index.ts'), zod: resolve('node_modules/zod') } });
+	const result = spawnSync(process.execPath, ['--test', outfile, workspaceTests, gridTests], { stdio: 'inherit' });
 	process.exitCode = result.status ?? 1;
 } finally { rmSync(temporary, { recursive: true, force: true }); }

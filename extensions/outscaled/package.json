@@ -62,6 +62,14 @@
 			{
 				"command": "outscaled.switchWorkspace",
 				"title": "%workspaces.switch%"
+			},
+			{
+				"command": "outscaled.openGrid",
+				"title": "%grid.open%"
+			},
+			{
+				"command": "outscaled.focusTerminal",
+				"title": "%grid.focusTerminal%"
 			}
 		],
 		"menus": {
@@ -71,7 +79,31 @@
 					"when": "view == outscaled.workspaces",
 					"group": "navigation"
 				}
+			],
+			"view/item/context": [
+				{
+					"command": "outscaled.openGrid",
+					"when": "view == outscaled.workspaces && viewItem == outscaled.workspace",
+					"group": "outscaled"
+				}
+			],
+			"commandPalette": [
+				{
+					"command": "outscaled.focusTerminal",
+					"when": "false"
+				}
 			]
+		},
+		"configuration": {
+			"title": "Outscaled",
+			"properties": {
+				"outscaled.wsPath": {
+					"type": "string",
+					"default": "",
+					"scope": "machine",
+					"description": "%grid.wsPath%"
+				}
+			}
 		}
 	},
 	"dependencies": {
