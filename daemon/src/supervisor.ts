@@ -111,6 +111,7 @@ export class Supervisor {
     // its full timestamp bucket before counting two seconds of startup silence.
     const outputAt = pane.outputGeneration === null ? Math.max(now, (pane.windowActivity + 1) * 1000) : now;
     let watch = this.outputWatches.get(terminal.id);
+    const hasBaseline = watch?.pid === pane.pid;
     if (!watch || watch.pid !== pane.pid) {
       watch = {
         pid: pane.pid, generation: pane.outputGeneration, activity: pane.windowActivity, lastOutputAt: outputAt,
@@ -135,8 +136,12 @@ export class Supervisor {
     if (output) {
       watch.lastOutputAt = outputAt;
     }
-    const canStartWork = terminal.status === "idle" && now >= watch.redrawGraceUntil &&
-      !this.terminals.codexInNotifyGrace(terminal, now);
+    // The first observation is only a baseline, not evidence of silence. With
+    // activity timestamps, silence is only certain once their second ends.
+    const quiet = hasBaseline && !output &&
+      (pane.outputGeneration !== null || now >= (pane.windowActivity + 1) * 1000);
+    const notifyGrace = this.terminals.codexInNotifyGrace(terminal, now, quiet);
+    const canStartWork = terminal.status === "idle" && now >= watch.redrawGraceUntil && !notifyGrace;
     // Sporadic redraws (including late MCP/plugin output and brief typing) are
     // not turns. Require consecutive output observations outside either grace.
     if (!canStartWork) {

@@ -79,10 +79,17 @@ export class Terminals {
     this.state.updateTerminalStatus(id, "idle");
   }
 
-  codexInNotifyGrace(terminal: Terminal, now: number): boolean {
+  codexInNotifyGrace(terminal: Terminal, now: number, quiet: boolean): boolean {
     const notifiedAt = this.codexNotifyTimes.get(terminal.id);
-    if (notifiedAt !== undefined && now - notifiedAt >= 1000) this.codexNotifyTimes.delete(terminal.id);
-    return notifiedAt !== undefined && now - notifiedAt < 1000;
+    if (notifiedAt === undefined) return false;
+    // Turn completion can precede several seconds of continuous TUI rendering.
+    // Wait for silence after the minimum grace before watching for a new turn.
+    // Starting/working belongs to a new process or submission, not this tail.
+    if (terminal.status !== "idle" || (now - notifiedAt >= 1000 && quiet)) {
+      this.codexNotifyTimes.delete(terminal.id);
+      return false;
+    }
+    return true;
   }
 
   reconcile(): Promise<void> {
