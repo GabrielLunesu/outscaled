@@ -113,7 +113,9 @@ test('stream precedes snapshot, replays in-flight status, refetches membership a
 	const connection = new Connection('local', () => {}, () => {});
 	try {
 		connection.setEndpoint(`http://127.0.0.1:${address.port}`);
+		const earlyRead = connection.request('health');
 		await until(() => connection.state.online);
+		assert.deepEqual(await (await earlyRead).json(), health, 'startup file clients wait for the shared connection');
 		assert.equal(needsYou(connection.state.terminals), 1);
 		const send = (message: unknown) => { for (const socket of wss.clients) socket.send(JSON.stringify(message)); };
 		send({ type: 'server.health', payload: { ...health, uptimeSec: 99 } });
@@ -177,4 +179,13 @@ test('tunnel restarts after SSH failure and kills a proxy process group on dispo
 		tunnel.dispose();
 		await until(() => !alive(pid) && !alive(proxy));
 	} finally { tunnel.dispose(); rmSync(root, { recursive: true, force: true }); }
+});
+
+
+test('pending startup requests are cancelled when their connection is disposed', async () => {
+	const connection = new Connection('test', () => {}, () => {});
+	const first = assert.rejects(connection.request('fs/demo/?op=stat'), /Connection stopped/);
+	const second = assert.rejects(connection.request('fs/demo/file?op=read'), /Connection stopped/);
+	connection.dispose();
+	await Promise.all([first, second]);
 });

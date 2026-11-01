@@ -4,5 +4,6 @@
 	"container.title": "Outscaled",
 	"workspaces.title": "Workspaces",
 	"workspaces.welcome": "No workspaces found. Start wsd locally or add SSH hosts to your Outscaled servers.toml.",
-	"workspaces.refresh": "Refresh Workspaces"
+	"workspaces.refresh": "Refresh Workspaces",
+	"workspaces.switch": "Switch Outscaled Workspace"
 }

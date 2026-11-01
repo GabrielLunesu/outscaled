@@ -8,7 +8,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { Connection } from './connection';
-import { localPort, parseServers } from './servers';
+import { hostAuthority, localPort, parseServers } from './servers';
 import { ServerState } from './state';
 import { Tunnel } from './tunnel';
 
@@ -18,18 +18,26 @@ export class DaemonService {
 	private readonly connections = new Map<string, { connection: Connection; tunnel?: Tunnel }>();
 	private readonly diagnostics = new Map<string, string>();
 	private readonly timer: NodeJS.Timeout;
+	private readonly initialized: Promise<void>;
 	private lastSource?: string;
 	private reading = false;
 	private stopped = false;
 
 	constructor(private readonly log: (message: string) => void, private readonly env: NodeJS.ProcessEnv = process.env) {
 		this.add('local');
-		void this.readServers();
+		this.initialized = this.readServers();
 		// Reading the small file also handles absent directories, atomic saves and replacement.
 		this.timer = setInterval(() => { void this.readServers(); }, 2000);
 	}
 
 	get servers(): readonly ServerState[] { return [...this.connections.values()].map(value => value.connection.state); }
+
+	async request(host: string, path: string, init?: RequestInit): Promise<Response> {
+		await this.initialized;
+		const entry = this.connections.get(host) ?? [...this.connections.entries()].find(([target]) => hostAuthority(target) === hostAuthority(host))?.[1];
+		if (!entry) throw new Error('Server is not configured');
+		return entry.connection.request(path, init);
+	}
 
 	onDidChange(listener: () => void): { dispose(): void } {
 		this.events.on('change', listener);

@@ -5,6 +5,12 @@
 
 import { parse } from 'smol-toml';
 
+/** URI serialization lowercases hostnames, but preserves SSH usernames. */
+export function hostAuthority(host: string): string {
+	const at = host.lastIndexOf('@');
+	return host.slice(0, at + 1) + host.slice(at + 1).toLowerCase();
+}
+
 export function validateSshTarget(target: string): void {
 	// Match the CLI: one destination argv, never an option, URI or command.
 	if (!/^(?:[a-zA-Z0-9_][a-zA-Z0-9_.-]*@)?[a-zA-Z0-9_\[:][a-zA-Z0-9_.:\[\]-]*$/.test(target)) {
