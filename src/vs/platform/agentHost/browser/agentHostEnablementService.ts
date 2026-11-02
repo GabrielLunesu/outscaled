@@ -6,6 +6,7 @@
 import { Disposable } from '../../../base/common/lifecycle.js';
 import { derived, IObservable, observableFromEvent } from '../../../base/common/observable.js';
 import { isWeb } from '../../../base/common/platform.js';
+import product from '../../product/common/product.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
 import { ChatAIDisabledSettingId } from '../../chat/common/chatSettings.js';
 import { IContextKeyService } from '../../contextkey/common/contextkey.js';
@@ -48,7 +49,7 @@ class BrowserAgentHostEnablementService extends AgentHostEnablementService {
 		@IContextKeyService contextKeyService: IContextKeyService,
 		@IManagedSettingsService managedSettingsService: IManagedSettingsService,
 	) {
-		super(!isWeb, configurationService, contextKeyService, managedSettingsService);
+		super(!isWeb && product.agentHostEnabled !== false, configurationService, contextKeyService, managedSettingsService);
 	}
 }
 

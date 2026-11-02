@@ -89,7 +89,7 @@ export class ExtensionEnablementService extends Disposable implements IWorkbench
 		@IChatEntitlementService private readonly chatEntitlementService: IChatEntitlementService,
 		@IInstantiationService instantiationService: IInstantiationService,
 		@ILogService private readonly logService: ILogService,
-		@IProductService productService: IProductService
+		@IProductService private readonly productService: IProductService
 	) {
 		super();
 		this.storageManager = this._register(new StorageManager(storageService));
@@ -448,6 +448,9 @@ export class ExtensionEnablementService extends Disposable implements IWorkbench
 	}
 
 	private _computeEnablementState(extension: IExtension, extensions: ReadonlyArray<IExtension>, workspaceType: WorkspaceType, computedEnablementStates?: Map<IExtension, EnablementState>): EnablementState {
+		if (this.productService.disabledExtensions?.some(id => areSameExtensions({ id }, extension.identifier))) {
+			return EnablementState.DisabledByEnvironment;
+		}
 		computedEnablementStates = computedEnablementStates ?? new Map<IExtension, EnablementState>();
 		let enablementState = computedEnablementStates.get(extension);
 		if (enablementState !== undefined) {

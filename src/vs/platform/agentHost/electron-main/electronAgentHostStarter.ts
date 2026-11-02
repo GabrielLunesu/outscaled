@@ -10,6 +10,7 @@ import { validatedIpcMain } from '../../../base/parts/ipc/electron-main/ipcMain.
 import { Client as MessagePortClient } from '../../../base/parts/ipc/electron-main/ipc.mp.js';
 import { ProxyChannel } from '../../../base/parts/ipc/common/ipc.js';
 import { AiAgentEnvValue, AiAgentEnvVar } from '../../chat/common/aiAgentEnv.js';
+import product from '../../product/common/product.js';
 import { IConfigurationService } from '../../configuration/common/configuration.js';
 import { IEnvironmentMainService } from '../../environment/electron-main/environmentMainService.js';
 import { parseAgentHostDebugPort } from '../../environment/node/environmentService.js';
@@ -101,6 +102,9 @@ export class ElectronAgentHostStarter extends Disposable implements IAgentHostSt
 	}
 
 	async start(): Promise<IAgentHostConnection> {
+		if (product.agentHostEnabled === false) {
+			throw new Error('Agent host is disabled by this product.');
+		}
 		if (this.utilityProcess) {
 			throw new Error('Agent Host utility process is already running.');
 		}
