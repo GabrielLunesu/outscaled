@@ -1,0 +1,37 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Gabriel Lunesu. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.outscaled-agents-host { display: flex; flex-direction: column; }
+.outscaled-agents-host > .outscaled-agents-grid { flex: 1; height: auto; min-height: 0; }
+.outscaled-background { display: flex; align-items: center; flex: none; min-width: 0; gap: var(--vscode-spacing-size80); padding: var(--vscode-spacing-size40) var(--vscode-spacing-size80); color: var(--vscode-descriptionForeground); border-top: var(--vscode-strokeThickness) solid var(--vscode-widget-border, transparent); }
+.outscaled-background-heading { flex: none; font-size: var(--vscode-fontSize-body2); }
+.outscaled-background-list { display: flex; align-items: center; gap: var(--vscode-spacing-size80); min-width: 0; overflow-x: auto; padding: var(--vscode-spacing-size40) var(--vscode-spacing-size20); }
+.outscaled-background-list:empty { padding: 0; }
+.outscaled-background-empty { font-size: var(--vscode-fontSize-body2); padding: var(--vscode-spacing-size40) 0; }
+.outscaled-background-chip { display: flex; align-items: center; gap: var(--vscode-spacing-size80); flex: none; max-width: 440px; height: 32px; padding: 0 var(--vscode-spacing-size100); color: var(--vscode-foreground); background: transparent; border: var(--vscode-strokeThickness) solid var(--vscode-widget-border, transparent); border-radius: var(--vscode-cornerRadius-small); cursor: pointer; font: inherit; }
+.outscaled-background-chip:hover, .outscaled-background-chip[aria-expanded="true"] { background: var(--vscode-toolbar-hoverBackground); }
+.outscaled-background-chip:focus-visible, .outscaled-background-list:focus-visible, .outscaled-agent-card button:focus-visible, .outscaled-agent-card input:focus-visible, .outscaled-agent-card textarea:focus-visible { outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder); outline-offset: 1px; }
+.outscaled-background-name { font-weight: var(--vscode-fontWeight-semiBold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+.outscaled-background-chip .outscaled-runtime-badge { flex: none; margin-left: 0; border-radius: var(--vscode-cornerRadius-small); }
+.outscaled-background-line { min-width: 0; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--vscode-descriptionForeground); }
+.outscaled-background-next { flex: none; font-size: var(--vscode-fontSize-body2); color: var(--vscode-descriptionForeground); }
+.outscaled-background-chip[data-status="working"] .outscaled-status-dot { background: var(--vscode-terminal-ansiGreen); }
+.outscaled-background-chip[data-status="needs_input"] .outscaled-status-dot { background: var(--vscode-terminal-ansiRed); }
+.outscaled-background-chip[data-status="crashed"] .outscaled-status-dot { background: transparent; color: var(--vscode-terminal-ansiRed); line-height: 8px; font-size: var(--vscode-fontSize-heading2); }
+.outscaled-agent-card { box-sizing: border-box; width: min(440px, 90vw); max-height: 75vh; overflow: auto; padding: var(--vscode-spacing-size160); color: var(--vscode-editorWidget-foreground); background: var(--vscode-editorWidget-background); border: var(--vscode-strokeThickness) solid var(--vscode-widget-border, transparent); border-radius: var(--vscode-cornerRadius-large); box-shadow: var(--vscode-shadow-lg); }
+.outscaled-agent-card h3 { margin: 0; font-size: var(--vscode-fontSize-heading3); font-weight: var(--vscode-fontWeight-semiBold); }
+.outscaled-card-status, .outscaled-card-reason, .outscaled-agent-card dt { color: var(--vscode-descriptionForeground); font-size: var(--vscode-fontSize-body2); }
+.outscaled-agent-card p { margin: var(--vscode-spacing-size80) 0; overflow-wrap: anywhere; }
+.outscaled-agent-card dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--vscode-spacing-size80) var(--vscode-spacing-size120); margin: var(--vscode-spacing-size160) 0; }
+.outscaled-agent-card dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 120px; overflow: auto; }
+.outscaled-card-actions { display: flex; flex-wrap: wrap; gap: var(--vscode-spacing-size80); }
+.outscaled-agent-card button { font: inherit; color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); border: var(--vscode-strokeThickness) solid var(--vscode-button-border, transparent); border-radius: var(--vscode-cornerRadius-small); padding: var(--vscode-spacing-size40) var(--vscode-spacing-size80); cursor: pointer; }
+.outscaled-agent-card button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+.outscaled-agent-card button:disabled { opacity: 0.5; cursor: default; }
+.outscaled-schedule-edit { margin-top: var(--vscode-spacing-size160); }
+.outscaled-schedule-edit label { display: block; margin-bottom: var(--vscode-spacing-size80); }
+.outscaled-schedule-edit textarea, .outscaled-schedule-edit input { display: block; box-sizing: border-box; width: 100%; margin-top: var(--vscode-spacing-size40); font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: var(--vscode-strokeThickness) solid var(--vscode-input-border, transparent); border-radius: var(--vscode-cornerRadius-small); padding: var(--vscode-spacing-size60); }
+.outscaled-schedule-edit textarea { resize: vertical; }
+.outscaled-agent-card [hidden], .outscaled-background [hidden] { display: none; }

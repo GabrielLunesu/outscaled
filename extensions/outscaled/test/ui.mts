@@ -73,7 +73,7 @@ try {
 	for (const agent of ['claude', 'codex']) { writeFileSync(join(bin, agent), `#!${process.execPath}
 const {appendFileSync}=require('node:fs');
 appendFileSync(process.env.TEST_AGENT_LOG,JSON.stringify({agent:'${agent}',args:process.argv.slice(2)})+'\\n');
-console.log('fake ${agent} ready — AGENTS_VIEW');
+console.log(process.argv.includes('SCHEDULE_FIXTURE') ? 'SCHEDULE_RESULT' : 'fake ${agent} ready — AGENTS_VIEW');
 require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
  if(line==='HISTORY'){for(let i=1;i<=80;i++)console.log('AGENTS_HISTORY_'+i);console.log('fake ${agent} ready — AGENTS_VIEW');}
  console.log('received:'+line);
@@ -135,6 +135,7 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	assert.deepEqual(await win.locator('.outscaled-workspace-label').allTextContents(), ['agents-demo', 'second-demo']);
 	assert.deepEqual(await win.locator('.outscaled-workspace-detail').allTextContents(), [folder, second]);
 	await capture('00-launch');
+	await win.locator('.outscaled-background.empty').waitFor(); await capture('strip-empty');
 	if (process.env.UI_INSPECT_LAUNCH) {
 		console.log('Inspect 00-launch.png, then create launch-inspected in the evidence folder.');
 		await until(() => existsSync(join(evidence, 'launch-inspected')), 'visual launch inspection', 180000);
@@ -188,7 +189,7 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	assert.equal(initial[0].y, initial[1].y); assert.equal(initial[2].y, initial[3].y);
 	assert.equal(initial[0].x, initial[2].x); assert.ok(initial[1].x > initial[0].x && initial[2].y > initial[0].y);
 	assert.equal(await win.locator('.tabs-container .tab:visible').count(), 0);
-	assert.deepEqual(await win.locator('.outscaled-runtime-badge').allTextContents(), ['Claude', 'Claude', 'Codex', 'Codex']);
+	assert.deepEqual(await win.locator('.outscaled-agent-pane .outscaled-runtime-badge').allTextContents(), ['Claude', 'Claude', 'Codex', 'Codex']);
 	assert.deepEqual(await win.locator('.outscaled-agent-name').allTextContents(), ['claude-1', 'claude-2', 'codex-1', 'codex-2']);
 	await capture('01-agents');
 	await request('hooks/claude-code', { terminal: target.id, payload: { hook_event_name: 'UserPromptSubmit' } });
@@ -325,7 +326,7 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 		await openPreset(`${label} · shells`);
 		await until(async () => {
 			const boxes = await proof();
-			if (boxes.length !== count || !(await win.locator('.outscaled-runtime-badge').allTextContents()).every((text: string) => text === 'Shell')) { return false; }
+			if (boxes.length !== count || !(await win.locator('.outscaled-agent-pane .outscaled-runtime-badge').allTextContents()).every((text: string) => text === 'Shell')) { return false; }
 			if (label === 'Side by side' || label === 'Four across') { return boxes.every((box: any) => box.y === boxes[0].y) && boxes[1].x > boxes[0].x; }
 			if (label === 'Stacked') { return boxes[1].x === boxes[0].x && boxes[1].y > boxes[0].y; }
 			if (label === '2×2') { return boxes[1].y === boxes[0].y && boxes[2].x === boxes[0].x && boxes[2].y > boxes[0].y; }
@@ -380,7 +381,12 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 		if (expected.run === 'scheduled') {
 			assert.equal(await dialog.getByLabel('Interval', { exact: true }).inputValue(), '30m');
 			assert.equal(await dialog.getByRole('button', { name: 'Create', exact: true }).isDisabled(), true);
-			await dialog.getByText('Scheduled agents in terminals are coming', { exact: false }).waitFor();
+			await dialog.getByText('Scheduled agents go to the background strip.', { exact: false }).waitFor();
+			assert.equal(await dialog.getByLabel('Where', { exact: true }).isDisabled(), true);
+			await dialog.getByLabel('Prompt (Required for Scheduled)', { exact: true }).fill('SCHEDULE_FIXTURE');
+			assert.equal(await dialog.getByRole('button', { name: 'Create', exact: true }).isEnabled(), true);
+			await capture('dialog-scheduled');
+			await dialog.getByLabel('Prompt (Required for Scheduled)', { exact: true }).fill('');
 			const before = await request('workspaces/agents-demo/terminals');
 			await win.keyboard.press('Enter');
 			assert.deepEqual((await request('workspaces/agents-demo/terminals')).map(terminal => terminal.id), before.map(terminal => terminal.id));
@@ -396,6 +402,8 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	for (const terminal of runningBefore) {
 		assert.equal(spawnSync('tmux', ['-S', socket, 'has-session', '-t', '=' + terminal.session]).status, 0);
 	}
+	for (const pane of replaced) { await win.locator(`.outscaled-background-chip[data-terminal-id="${pane.id}"]`).waitFor(); }
+	await capture('strip-chips');
 	await capture('new-03-replace-grid');
 	const literalPrompt = 'Say "hello" and \'goodbye\': $(touch pwned) `touch pwned`\nnext line';
 	await openDialog(); await dialog.getByLabel('Type What You Want', { exact: true }).fill('codex right');
@@ -431,6 +439,7 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	for (const terminal of runningBefore) { assert.equal(spawnSync('tmux', ['-S', socket, 'has-session', '-t', '=' + terminal.session]).status, 0); }
 	await openDialog(); await dialog.getByRole('button', { name: 'My always-on Claude', exact: true }).waitFor();
 	await capture('new-07-saved-after-reload'); await win.keyboard.press('Escape');
+	for (const pane of replaced) { await win.locator(`.outscaled-background-chip[data-terminal-id="${pane.id}"]`).waitFor(); }
 	await capture('new-08-grid-after-reload');
 	assert.equal(await row('agents-demo').locator('.outscaled-workspace-dot').count(), (await request('workspaces/agents-demo/terminals')).length);
 
@@ -476,6 +485,9 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	assert.equal(spawnSync('tmux', ['-S', socket, 'has-session', '-t', '=' + shellSession.session]).status, 0);
 	const closedGap = await proof();
 	assert.ok(Math.abs(closedGap[1].width - closedGap[2].width) < 2);
+	await win.locator(`.outscaled-background-chip[data-terminal-id="${shellId}"]`).waitFor();
+	await request(`workspaces/agents-demo/terminals/${shellSession.name}/input`, { text: 'echo STRIP_LIVE_OUTPUT; sleep 10', submit: true });
+	await until(async () => (await win.locator(`.outscaled-background-chip[data-terminal-id="${shellId}"] .outscaled-background-line`).innerText()) === 'STRIP_LIVE_OUTPUT', 'shell chip latest line');
 	await capture('pane-05-background-closes-gap');
 	// All these trees use the pre-resize format: no sizes at any split level.
 	assert.equal(await win.evaluate(() => JSON.stringify((window as ProbedWindow).__agentsProbe.agents.snapshot.workspaces.find(workspace => workspace.selected)!.layout).includes('sizes')), false);
@@ -488,6 +500,7 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	await reloadAgents();
 	assert.deepEqual((await proof()).map(pane => pane.id), [alwaysId, claudeId, codexId]);
 	assert.equal(spawnSync('tmux', ['-S', socket, 'has-session', '-t', '=' + shellSession.session]).status, 0);
+	await win.locator(`.outscaled-background-chip[data-terminal-id="${shellId}"]`).waitFor();
 	await capture('pane-06-old-layout-and-background-reloaded');
 	const dimensions = () => win.evaluate(() => {
 		const probe = (window as ProbedWindow).__agentsProbe;
@@ -580,6 +593,89 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	assert.equal((await proof()).length, 0);
 	await capture('pane-17-empty-reloaded');
 
+
+	// Background chips retain live data, keyboard focus and scroll under stream updates.
+	const chipFor = (id: string) => win.locator(`.outscaled-background-chip[data-terminal-id="${id}"]`);
+	await chipFor(shellId).click();
+	const card = win.locator('.outscaled-agent-card'); await card.waitFor(); await capture('agent-card');
+	await card.getByRole('button', { name: 'Open in Grid', exact: true }).click();
+	await until(async () => (await proof()).length === 1 && await focusedId() === shellId, 'chip opens into empty grid focused');
+	assert.equal(await chipFor(shellId).count(), 0);
+	// Reopen an ordinary chip relative to the focused pane.
+	await chipFor(claudeId).click(); await card.getByRole('button', { name: 'Open in Grid', exact: true }).click();
+	await until(async () => (await proof()).length === 2 && await focusedId() === claudeId, 'chip opens to right focused');
+	assert.deepEqual((await proof()).map(pane => pane.id), [shellId, claudeId]);
+	await win.keyboard.press('Meta+m'); await chipFor(claudeId).waitFor();
+	const transcript = join(temporary, 'strip-transcript.jsonl');
+	writeFileSync(transcript, JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'TRANSCRIPT_LATEST_LINE' }] } }) + '\n');
+	await request('hooks/claude-code', { terminal: claudeId, payload: { hook_event_name: 'Stop', transcript_path: transcript } });
+	await until(async () => (await chipFor(claudeId).locator('.outscaled-background-line').innerText()) === 'TRANSCRIPT_LATEST_LINE', 'Claude transcript chip line');
+	await request('hooks/claude-code', { terminal: claudeId, payload: { hook_event_name: 'Notification', notification_type: 'permission_prompt' } });
+	await until(async () => await chipFor(claudeId).getAttribute('data-status') === 'needs_input', 'chip needs-you dot');
+	await command('notifications.clearAll');
+	await chipFor(claudeId).focus(); await win.keyboard.press('ArrowRight');
+	assert.notEqual(await win.evaluate(() => document.activeElement?.getAttribute('data-terminal-id')), claudeId);
+	await win.keyboard.press('Enter'); await card.waitFor(); await win.keyboard.press('Escape');
+	assert.equal(await card.count(), 0);
+	await win.locator('.outscaled-background-list').evaluate(element => { element.scrollLeft = 0; });
+	assert.equal(await win.locator('.outscaled-background-list').evaluate(element => element.scrollWidth > element.clientWidth), true);
+	await capture('strip-overflow');
+
+	const schedulesPath = 'workspaces/agents-demo/schedules';
+	await openDialog(); await dialog.getByLabel('Type What You Want', { exact: true }).fill('claude every 30m');
+	await dialog.getByLabel('Prompt (Required for Scheduled)', { exact: true }).fill('SCHEDULE_FIXTURE'); await create();
+	await until(async () => (await request(schedulesPath)).length === 1, 'schedule created');
+	const schedule = (await request(schedulesPath))[0];
+	const scheduleChip = win.locator(`.outscaled-background-chip[data-agent-id="schedule:${schedule.name}"]`);
+	await scheduleChip.waitFor(); assert.match(await scheduleChip.innerText(), /Next:/);
+	await command('notifications.clearAll');
+	await scheduleChip.click(); await card.waitFor();
+	assert.equal(await card.getByRole('button', { name: 'Open in Grid', exact: true }).isDisabled(), true);
+	await card.getByText('A terminal is available after the first run.', { exact: true }).waitFor();
+	await until(async () => await card.evaluate(element => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 0 && rect.bottom <= window.innerHeight; }), 'scheduled card stays inside viewport');
+	await capture('scheduled-card');
+	await card.getByRole('button', { name: 'Run Now', exact: true }).click();
+	await until(async () => await scheduleChip.getAttribute('data-status') === 'working', 'schedule run working');
+	assert.equal(await card.getByRole('button', { name: 'Run Now', exact: true }).isDisabled(), true);
+	await card.getByText('A run is already in progress.', { exact: true }).waitFor();
+	await until(async () => (await request('workspaces/agents-demo/terminals')).some(terminal => terminal.name === schedule.name), 'scheduled terminal exists');
+	const scheduledTerminal = (await request('workspaces/agents-demo/terminals')).find(terminal => terminal.name === schedule.name);
+	await until(async () => (await request(`workspaces/agents-demo/terminals/${scheduledTerminal.name}/output`)).text.includes('SCHEDULE_RESULT'), 'fake scheduled output');
+	writeFileSync(transcript, JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'SCHEDULE_RESULT' }] } }) + '\n');
+	await request('hooks/claude-code', { terminal: scheduledTerminal.id, payload: { hook_event_name: 'Stop', transcript_path: transcript } });
+	await until(async () => (await scheduleChip.locator('.outscaled-background-line').innerText()) === 'SCHEDULE_RESULT' && (await card.innerText()).includes('Succeeded'), 'completed run and latest line');
+	await capture('scheduled-card-completed');
+	await card.getByRole('button', { name: 'Pause', exact: true }).click();
+	await card.getByRole('button', { name: 'Resume', exact: true }).waitFor(); assert.equal((await request(schedulesPath))[0].paused, true);
+	await card.getByRole('button', { name: 'Resume', exact: true }).click();
+	await card.getByRole('button', { name: 'Pause', exact: true }).waitFor(); assert.equal((await request(schedulesPath))[0].paused, false);
+	await card.getByRole('button', { name: 'Edit', exact: true }).click();
+	await until(async () => await card.evaluate(element => { const rect = element.getBoundingClientRect(); return rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 0 && rect.bottom <= window.innerHeight; }), 'schedule edit stays inside viewport');
+	await capture('scheduled-card-edit');
+	await card.getByLabel('Prompt (Required)', { exact: true }).fill('Edited schedule prompt');
+	await card.getByLabel('Interval', { exact: true }).fill('2h');
+	await card.getByRole('button', { name: 'Save', exact: true }).click();
+	await until(async () => (await request(schedulesPath))[0].every === '2h', 'schedule edit saved');
+	assert.equal((await request(schedulesPath))[0].prompt, 'Edited schedule prompt');
+	await card.getByRole('button', { name: 'Open in Grid', exact: true }).click();
+	await until(async () => await focusedId() === scheduledTerminal.id && (await proof()).length === 2, 'scheduled terminal opens focused');
+	assert.equal(await scheduleChip.count(), 0);
+	await win.keyboard.press('Meta+m'); await scheduleChip.waitFor();
+	mkdirSync(join(folder, '.ws'), { recursive: true });
+	writeFileSync(join(folder, '.ws/prompt.md'), 'Workspace schedule prompt');
+	writeFileSync(join(folder, '.ws/workspace.toml'), '[[agent]]\nname = "workspace-check"\nruntime = "codex"\nmode = "scheduled"\nevery = "1d"\nprompt = "prompt.md"\n');
+	await scheduleChip.click(); await card.getByRole('button', { name: 'Delete', exact: true }).click();
+	const confirmation = win.locator('.monaco-dialog-box'); await confirmation.waitFor();
+	await confirmation.getByRole('button', { name: 'Delete', exact: true }).click();
+	await until(async () => !(await request(schedulesPath)).some(entry => entry.name === schedule.name) && await scheduleChip.count() === 0, 'schedule deleted');
+	// Workspace schedules retain pause/run controls but direct edits to workspace.toml.
+
+	const workspaceChip = win.locator('.outscaled-background-chip[data-agent-id="schedule:workspace-check"]'); await workspaceChip.waitFor(); await workspaceChip.click();
+	await card.getByText('Edit this schedule in .ws/workspace.toml.', { exact: true }).waitFor();
+	assert.equal(await card.getByRole('button', { name: 'Edit', exact: true }).isVisible(), false);
+	assert.equal(await card.getByRole('button', { name: 'Delete', exact: true }).isVisible(), false);
+	await capture('scheduled-card-workspace'); await win.keyboard.press('Escape');
+
 	// Exercise the retained VPS transport through a private SSH double. Both endpoints
 	// use this fixture daemon; no connection is made to port 7770 or a real host.
 	await request('hooks/claude-code', { terminal: target.id, payload: { hook_event_name: 'Stop' } });
@@ -624,7 +720,7 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	assert.equal(ssh.filter(entry => entry.kind === 'attach').length, 2);
 	writeFileSync(join(evidence, 'proof.json'), JSON.stringify({ initial, working, needsInput, before, after, terminals, secondTerminals, geometries, remote, ssh, errors }, null, 2));
 	assert.deepEqual(errors, []);
-	console.log('PASS: core sidebar, live badges, dot/row focus, keyboard navigation, Agents/Code shortcuts, native commands, identity, tmux history, workspace/reload persistence, needs-you focus, six split geometries, New agents modal and keyboard focus, typed commands, fresh launches, non-destructive replacement/reload, right/add insertion, literal prompts, run modes, private presets, pane actions and scoped shortcuts, persistent background membership and empty grids, nested sash resizing/reload/reset and old layout migration');
+	console.log('PASS: core sidebar, live badges, dot/row focus, keyboard navigation, Agents/Code shortcuts, native commands, identity, tmux history, workspace/reload persistence, needs-you focus, six split geometries, New agents modal and keyboard focus, typed commands, fresh launches, non-destructive replacement/reload, right/add insertion, literal prompts, run modes, private presets, pane actions and scoped shortcuts, persistent background membership and empty grids, nested sash resizing/reload/reset and old layout migration, background chips and cards, live latest lines, horizontal overflow, scheduled creation/run/edit/pause/resume/delete and read-only workspace schedules');
 } finally {
 	writeFileSync(join(evidence, 'page-errors.json'), JSON.stringify(errors, null, 2));
 	writeFileSync(join(evidence, 'renderer-errors.json'), JSON.stringify(rendererErrors, null, 2));

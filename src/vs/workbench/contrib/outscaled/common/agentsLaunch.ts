@@ -27,6 +27,13 @@ export function isAgentsLaunch(value: unknown): value is AgentsLaunch {
 		typeof launch.prompt === 'string' && launch.prompt.length <= 32768 && !launch.prompt.includes('\0');
 }
 
+/** Schedules have no shell pane or placement, and always need a prompt. */
+export function canLaunchAgents(choices: AgentsLaunch, focused?: string): boolean {
+	return isAgentsLaunch(choices) && (choices.run === 'scheduled'
+		? !!choices.prompt.trim() && !choices.agents.includes('shell')
+		: !['right', 'below'].includes(choices.where) || !!focused);
+}
+
 /** Parse only a small explicit vocabulary. Unconsumed input is reported, never executed. */
 export function parseAgentsCommand(input: string): { choices: AgentsLaunch; understood: boolean; ignored: string[] } {
 	const choices = defaultLaunch();

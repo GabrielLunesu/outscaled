@@ -14,7 +14,7 @@ import { IInstantiationService, createDecorator } from '../../../../platform/ins
 import { registerSingleton, InstantiationType } from '../../../../platform/instantiation/common/extensions.js';
 import { ILayoutService } from '../../../../platform/layout/browser/layoutService.js';
 import { KeybindingWeight } from '../../../../platform/keybinding/common/keybindingsRegistry.js';
-import { AgentsPreset, AgentsLaunch, defaultLaunch, layoutCounts, parseAgentsCommand } from '../common/agentsLaunch.js';
+import { AgentsPreset, AgentsLaunch, defaultLaunch, layoutCounts, parseAgentsCommand, canLaunchAgents } from '../common/agentsLaunch.js';
 import { AgentsRequest, AgentsWorkspace, agentsRequestCommand, isAgentsReceipt } from '../common/agentsBridge.js';
 import { AgentsLayout, LayoutId, layoutIds, layoutTerminals, presetLayout } from '../common/agentsLayout.js';
 import { IAgentsService } from './agentsService.js';
@@ -40,6 +40,7 @@ class AgentsDialog extends Disposable {
 	private readonly interval: HTMLInputElement;
 	private readonly where: HTMLSelectElement;
 	private readonly prompt: HTMLTextAreaElement;
+	private readonly promptText: HTMLElement;
 	private readonly note: HTMLElement;
 	private readonly create: HTMLButtonElement;
 	private readonly presetName: HTMLInputElement;
@@ -91,6 +92,8 @@ class AgentsDialog extends Disposable {
 		for (const option of Array.from(this.where.options)) { if (option.value === 'right' || option.value === 'below') { option.disabled = !this.focused; } }
 		dom.append(right, dom.$('p.outscaled-launch-help', undefined, localize('launch.keepRunning', "Replacing the view keeps its agents running. Always On restarts a terminal if it dies.")));
 		const promptLabel = dom.append(content, dom.$('label', undefined, localize('launch.prompt', "First Prompt (Optional)")));
+		this.promptText = dom.$('span', undefined, localize('launch.prompt', "First Prompt (Optional)"));
+		promptLabel.replaceChildren(this.promptText);
 		this.prompt = dom.append(promptLabel, dom.$('textarea', { rows: '2', maxlength: '32768' }));
 		this.note = dom.append(this.element, dom.$('p.outscaled-launch-note', { role: 'status' }));
 		const footer = dom.append(this.element, dom.$('footer'));
@@ -106,13 +109,13 @@ class AgentsDialog extends Disposable {
 			this.refresh();
 			this.interpretation.textContent = !this.query.value.trim() ? localize('launch.hint', "Type a command or choose a preset below.") :
 				!parsed.understood ? localize('launch.notUnderstood', "Not understood. Ignored: {0}", parsed.ignored.join(' ')) :
-				localize('launch.read', "{0} · {1} · {2} · {3}{4}", layoutLabels[this.choices.layout], this.choices.agents.map(agent => agentLabels[agent]).join(', '), this.runs.selectedOptions[0].text, this.where.selectedOptions[0].text,
+				localize('launch.read', "{0} · {1} · {2} · {3}{4}", layoutLabels[this.choices.layout], this.choices.agents.map(agent => agentLabels[agent]).join(', '), this.runs.selectedOptions[0].text, this.choices.run === 'scheduled' ? localize('launch.background', "Background Strip") : this.where.selectedOptions[0].text,
 					parsed.ignored.length ? localize('launch.ignored', " · Ignored: {0}", parsed.ignored.join(' ')) : '');
 		}));
 		this._register(dom.addDisposableListener(this.runs, 'change', () => { this.choices.run = this.runs.value as AgentsLaunch['run']; this.refresh(); }));
 		this._register(dom.addDisposableListener(this.where, 'change', () => { this.choices.where = this.where.value as AgentsLaunch['where']; this.refresh(); }));
-		this._register(dom.addDisposableListener(this.interval, 'input', () => { this.choices.interval = this.interval.value; this.updatePresetSelection(); }));
-		this._register(dom.addDisposableListener(this.prompt, 'input', () => { this.choices.prompt = this.prompt.value; this.updatePresetSelection(); }));
+		this._register(dom.addDisposableListener(this.interval, 'input', () => { this.choices.interval = this.interval.value; this.updateValidity(); this.updatePresetSelection(); }));
+		this._register(dom.addDisposableListener(this.prompt, 'input', () => { this.choices.prompt = this.prompt.value; this.updateValidity(); this.updatePresetSelection(); }));
 		this._register(dom.addDisposableListener(this.element, 'cancel', event => { event.preventDefault(); this.dispose(); }));
 		this._register(dom.addDisposableListener(this.element, 'keydown', event => {
 			if (event.key === 'Enter' && !event.shiftKey && (event.target === this.query || event.target === this.prompt)) { event.preventDefault(); void this.launch(); }
@@ -168,15 +171,21 @@ class AgentsDialog extends Disposable {
 			const pane = dom.$('div.outscaled-launch-pane');
 			const select = this.select(pane, localize('launch.pane', "Pane {0}", index + 1), Object.entries(agentLabels));
 			select.value = this.choices.agents[index];
-			this.choicesStore.add(dom.addDisposableListener(select, 'change', () => { this.choices.agents[index] = select.value as AgentsLaunch['agents'][number]; this.updatePresetSelection(); }));
+			for (const option of Array.from(select.options)) { option.disabled = option.value === 'shell' && this.choices.run === 'scheduled'; }
+			this.choicesStore.add(dom.addDisposableListener(select, 'change', () => { this.choices.agents[index] = select.value as AgentsLaunch['agents'][number]; this.updateValidity(); this.updatePresetSelection(); }));
 			return pane;
 		}));
 		this.runs.value = this.choices.run; this.interval.value = this.choices.interval;
 		this.interval.parentElement!.hidden = this.choices.run !== 'scheduled';
 		this.where.value = this.choices.where; this.prompt.value = this.choices.prompt;
-		this.note.textContent = this.choices.run === 'scheduled' ? localize('launch.notYet', "Scheduled agents in terminals are coming in Phase 4, item 5. Choose Quick or Always On to create agents now.") : '';
-		this.create.disabled = this.busy || this.choices.run === 'scheduled' || ((this.choices.where === 'right' || this.choices.where === 'below') && !this.focused);
+		this.where.disabled = this.choices.run === 'scheduled';
+		this.prompt.required = this.choices.run === 'scheduled';
+		this.promptText.textContent = this.choices.run === 'scheduled' ? localize('launch.requiredPrompt', "Prompt (Required for Scheduled)") : localize('launch.prompt', "First Prompt (Optional)");
+		this.note.textContent = this.choices.run === 'scheduled' ? localize('launch.scheduleNote', "Scheduled agents go to the background strip. Shell panes and Where do not apply. Choose Claude or Codex for each pane and enter a prompt.") : '';
+		this.updateValidity();
 	}
+	private updateValidity(): void { this.create.disabled = this.busy || !canLaunchAgents(this.choices, this.focused); }
+
 	private async send(request: AgentsRequest) {
 		const receipt = await this.commands.executeCommand<unknown>(agentsRequestCommand, request);
 		if (!isAgentsReceipt(receipt) || !receipt.ok) { throw new Error(isAgentsReceipt(receipt) && receipt.error ? receipt.error : localize('launch.failed', "The agents request failed.")); }
@@ -211,7 +220,7 @@ class AgentsDialog extends Disposable {
 			this.launched = true; this.dispose();
 			this.agents.owners.get(this.workspace.id)?.focus(this.agents.snapshot.focus?.terminal);
 		} catch (error) { if (!this.closed) { this.note.textContent = String(error); } }
-		finally { this.busy = false; if (!this.closed) { this.create.disabled = this.choices.run === 'scheduled'; } }
+		finally { this.busy = false; if (!this.closed) { this.updateValidity(); } }
 	}
 	override dispose(): void {
 		if (this.closed) { return; } this.closed = true;

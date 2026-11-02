@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { z } from 'zod';
-import { Health, StreamMessage, Terminal, TerminalStatus, Workspace } from '@outscaled/protocol';
+import { Health, LatestLine, ScheduleSummary, StreamMessage, Terminal, TerminalStatus, Workspace } from '@outscaled/protocol';
 
 export interface ServerState {
 	readonly host: string;
@@ -13,13 +13,18 @@ export interface ServerState {
 	health?: Health;
 	workspaces: Workspace[];
 	terminals: Terminal[];
+	schedules?: ScheduleSummary[];
 }
 
 /** Returns true when the notification requires an HTTP snapshot. */
 export function applyMessage(state: ServerState, message: StreamMessage): boolean {
-	if (message.type === 'workspace.changed') { return true; }
+	if (message.type === 'workspace.changed' || message.type === 'run.started' || message.type === 'run.finished') { return true; }
 	if (message.type === 'server.health') {
 		state.health = Health.parse(message.payload);
+	} else if (message.type === 'terminal.latest_line') {
+		const terminal = state.terminals.find(t => t.id === message.terminal && t.workspace === message.workspace);
+		if (!terminal) { return true; }
+		terminal.latestLine = z.object({ latestLine: LatestLine }).parse(message.payload).latestLine;
 	} else if (message.type === 'terminal.status') {
 		const status = z.object({ newStatus: TerminalStatus }).safeParse(message.payload);
 		if (!status.success) { throw new Error('Invalid terminal.status payload'); }

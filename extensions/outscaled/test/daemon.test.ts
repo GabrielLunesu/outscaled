@@ -11,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocketServer } from 'ws';
-import { Health, StreamMessage, Terminal, Workspace } from '@outscaled/protocol';
+import { Health, ScheduleSummary, StreamMessage, Terminal, Workspace } from '@outscaled/protocol';
 import { Backoff, localPort, parseServers, validateSshTarget } from '../src/daemon/servers';
 import { applyMessage, ServerState } from '../src/daemon/state';
 import { sshArgs, Tunnel } from '../src/daemon/tunnel';
@@ -88,13 +88,14 @@ test('SSH argv owns a foreground loopback tunnel with CLI safety options', () =>
 test('stream precedes snapshot, replays in-flight status, refetches membership and recovers without replay', async () => {
 	let connected = 0;
 	let requests = 0;
+	let schedules: ScheduleSummary[] = [];
 	let terminals = [{ ...terminal }];
 	let workspaces = [workspace];
 	let delaySnapshot = true;
 	const server = createServer((req, res) => {
 		assert.ok(connected > 0, 'stream opens before any snapshot request');
 		requests++;
-		const value = req.url === '/v1/health' ? health : req.url === '/v1/workspaces' ? workspaces : terminals;
+		const value = req.url?.endsWith('/schedules') ? schedules.filter(schedule => req.url === `/v1/workspaces/${schedule.workspace}/schedules`) : req.url === '/v1/health' ? health : req.url === '/v1/workspaces' ? workspaces : terminals;
 		const body = JSON.stringify(value);
 		if (req.url === '/v1/terminals' && delaySnapshot) {
 			delaySnapshot = false;
@@ -116,6 +117,12 @@ test('stream precedes snapshot, replays in-flight status, refetches membership a
 		const send = (message: unknown) => { for (const socket of wss.clients) {socket.send(JSON.stringify(message));} };
 		send({ type: 'server.health', payload: { ...health, uptimeSec: 99 } });
 		await until(() => connection.state.health?.uptimeSec === 99);
+		schedules = [ScheduleSummary.parse({ workspace: 'demo', name: 'check', runtime: 'codex', source: 'app', readOnly: false, every: '30m', prompt: 'Check', command: null, paused: false, lastRun: null, nextRunAt: time })];
+		send({ id: 'run-event', type: 'run.started', workspace: 'demo', terminal: terminal.id, payload: {}, time, acked: false });
+		await until(() => connection.state.schedules?.length === 1);
+		assert.deepEqual(connection.state.schedules, schedules);
+		send({ type: 'terminal.latest_line', workspace: 'demo', terminal: terminal.id, payload: { latestLine: 'Stream line' } });
+		await until(() => connection.state.terminals[0].latestLine === 'Stream line');
 		terminals = [{ ...terminal, state: 'exited' }];
 		workspaces = [workspace, { ...workspace, slug: 'second' }];
 		send({ type: 'workspace.changed', workspace: 'second' });
@@ -143,7 +150,7 @@ test('mutation barrier refetches membership after an older in-flight snapshot', 
 	let release: (() => void) | undefined;
 	let hold = false;
 	const server = createServer((req, res) => {
-		const body = JSON.stringify(req.url === '/v1/health' ? health : req.url === '/v1/workspaces' ? [workspace] : terminals);
+		const body = JSON.stringify(req.url?.endsWith('/schedules') ? [] : req.url === '/v1/health' ? health : req.url === '/v1/workspaces' ? [workspace] : terminals);
 		if (req.url === '/v1/terminals' && hold) {
 			hold = false;
 			release = () => res.end(body);
@@ -219,4 +226,19 @@ test('pending startup requests are cancelled when their connection is disposed',
 	const second = assert.rejects(connection.request('fs/demo/file?op=read'), /Connection stopped/);
 	connection.dispose();
 	await Promise.all([first, second]);
+});
+
+
+test('latest line events apply to the matching workspace and run events refresh schedules', () => {
+	const state: ServerState = { host: 'local', online: true, workspaces: [workspace], terminals: [{ ...terminal }] };
+	const message = { type: 'terminal.latest_line', workspace: 'demo', terminal: terminal.id, payload: { latestLine: 'Newest assistant message' } };
+	assert.equal(applyMessage(state, StreamMessage.parse(message)), false);
+	assert.equal(state.terminals[0].latestLine, 'Newest assistant message');
+	assert.equal(applyMessage(state, StreamMessage.parse({ ...message, workspace: 'other' })), true);
+	assert.equal(applyMessage(state, StreamMessage.parse({ ...message, payload: { latestLine: null } })), false);
+	assert.equal(state.terminals[0].latestLine, null);
+	for (const type of ['run.started', 'run.finished']) {
+		assert.equal(applyMessage(state, StreamMessage.parse({ id: 'event', type, workspace: 'demo', terminal: terminal.id, payload: {}, time, acked: false })), true);
+	}
+	assert.throws(() => applyMessage(state, { ...message, payload: { latestLine: 'invalid\nline' } } as StreamMessage));
 });

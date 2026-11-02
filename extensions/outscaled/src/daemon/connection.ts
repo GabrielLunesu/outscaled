@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Health, StreamMessage, Terminal, Workspace } from '@outscaled/protocol';
+import { Health, ScheduleSummary, StreamMessage, Terminal, Workspace } from '@outscaled/protocol';
 import WebSocket from 'ws';
 import { Backoff } from './servers';
 import { applyMessage, ServerState } from './state';
@@ -113,8 +113,9 @@ export class Connection {
 					request('workspaces').then(value => Workspace.array().parse(value)),
 					request('terminals').then(value => Terminal.array().parse(value))
 				]);
+				const schedules = (await Promise.all(workspaces.map(workspace => request(`workspaces/${encodeURIComponent(workspace.slug)}/schedules`).then(value => ScheduleSummary.array().parse(value))))).flat();
 				if (generation !== this.generation) {return;}
-				Object.assign(this.state, { health, workspaces, terminals, online: true, error: undefined });
+				Object.assign(this.state, { health, workspaces, terminals, schedules, online: true, error: undefined });
 				this.settleReadiness();
 				// Replay live changes over the HTTP snapshot, then refetch membership if needed.
 				for (const message of this.pending.splice(0)) {this.dirty = applyMessage(this.state, message) || this.dirty;}
