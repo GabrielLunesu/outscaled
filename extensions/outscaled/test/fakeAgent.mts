@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 // Private harness agent. Control files redraw the screen without submitting terminal input.
-import { appendFileSync, readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -15,9 +15,25 @@ export function runFakeAgent(agent: string): void {
 	let reader: ReturnType<typeof createInterface>;
 	const readLines = () => {
 		reader = createInterface({ input: process.stdin });
-		reader.on('line', line => {
+		reader.on('line', async line => {
 			if (line === 'HISTORY') { for (let i = 1; i <= 80; i++) { console.log('AGENTS_HISTORY_' + i); } ready(); }
 			console.log('received:' + line);
+			if (line === 'EDIT_CHANGES') {
+				const hook = async (runtime: string, payload: object) => {
+					const response = await fetch(`http://127.0.0.1:${process.env.WSD_PORT}/v1/hooks/${runtime}`, {
+						method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ terminal: process.env.WSD_TERMINAL, payload }) });
+					if (!response.ok) { report({ hookError: response.status }); }
+				};
+				if (agent === 'claude') {
+					writeFileSync('README.md', '# Agents view\n\nClaude edit from fake tool.\n');
+					await hook('claude-code', { hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_input: { file_path: join(process.cwd(), 'README.md') } });
+					await hook('claude-code', { hook_event_name: 'Stop' });
+				} else {
+					writeFileSync('codex-change.ts', 'export const codexChange = true;\n');
+					await hook('codex', { type: 'agent-turn-complete' });
+				}
+			}
+
 		});
 	};
 	ready(); readLines();

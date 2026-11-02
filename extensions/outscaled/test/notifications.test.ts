@@ -38,6 +38,11 @@ function fixture() {
 		set visible(value: boolean) { visible = value; }, set result(value: typeof result) { result = value; } };
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
+function gridContext(): vscode.ExtensionContext {
+	const state = () => { const data = new Map<string, unknown>(); return { get: (key: string) => data.get(key), update: async (key: string, value: unknown) => { data.set(key, value); } }; };
+	return { subscriptions: [], globalState: state(), workspaceState: state() } as unknown as vscode.ExtensionContext;
+}
+
 
 test('notify on transitions across servers, once per entry, with stable per-terminal/kind ids', async () => {
 	const f = fixture(), notifications = new TerminalNotifications(f.service, f.host);
@@ -143,11 +148,10 @@ test('bridge publishes a focus request after switching for both notification sur
 		settings.set('wsPath', process.execPath);
 		const f = fixture();
 		for (const server of f.service.servers) {server.workspaces = [{ slug: 'demo', path: '/test/demo' }] as ServerState['workspaces'];}
-		const service = { ...f.service, synchronize: async () => {}, request: async () => Response.json([terminal()]) } as DaemonService;
+		const service = { ...f.service, selectChanges: async () => {}, synchronize: async () => {}, request: async () => Response.json([terminal()]) } as DaemonService;
 		const target = { host: 'local', slug: 'demo', root: 'file:///test/demo' };
 		const selection = new WorkspaceSelection({ ...target, host: 'example-alias' });
-		const state = () => { const data = new Map(); return { get: (key: string) => data.get(key), update: async (key: string, value: any) => { data.set(key, value); } }; };
-		const context = { subscriptions: [], globalState: state(), workspaceState: state() } as unknown as vscode.ExtensionContext;
+		const context = gridContext();
 		handlers.set('_outscaled.agents.publish', () => ({ version: 1, ok: true, panes: [] }));
 		const grid = new TerminalGrid(context, service, selection, message => { throw new Error(message); });
 		try {
@@ -166,4 +170,32 @@ test('bridge publishes a focus request after switching for both notification sur
 			assert.ok(calls.findIndex(call => call[0] === 'outscaled.switchWorkspace') < calls.indexOf(focused[0]));
 		} finally { grid.dispose(); selection.dispose(); for (const subscription of context.subscriptions) {subscription.dispose();} }
 	}
+});
+
+test('a late cross-workspace focus cannot override a newer agent click', async () => {
+	calls.length = 0; handlers.clear(); settings.clear(); settings.set('wsPath', process.execPath);
+	const f = fixture();
+	const first = terminal(), second = { ...terminal(), id: 'second-agent', name: 'claude-2', session: 'ws-demo-claude-2' };
+	for (const server of f.service.servers) {
+		server.workspaces = [{ slug: 'demo', path: '/test/demo' }] as ServerState['workspaces']; server.terminals = [first, second];
+	}
+	const service = { ...f.service, selectChanges: async () => {}, synchronize: async () => {}, request: async () => Response.json([first, second]) } as DaemonService;
+	const target = { host: 'local', slug: 'demo', root: 'file:///test/demo' };
+	const selection = new WorkspaceSelection({ ...target, host: 'example-alias' });
+	const context = gridContext();
+	handlers.set('_outscaled.agents.publish', () => ({ version: 1, ok: true, panes: [] }));
+	const grid = new TerminalGrid(context, service, selection, message => { throw new Error(message); });
+	let release!: () => void, ready!: () => void;
+	const held = new Promise<void>(resolve => { release = resolve; });
+	const visible = new Promise<void>(resolve => { ready = resolve; });
+	try {
+		await grid.flush();
+		handlers.set('outscaled.switchWorkspace', async () => { await selection.prepare(target); await selection.select(target); ready(); await held; });
+		const earlier = commands.executeCommand('outscaled.focusTerminal', target, first.name);
+		await visible;
+		await commands.executeCommand('outscaled.focusTerminal', target, second.name);
+		release(); await earlier; await grid.flush();
+		assert.deepEqual(calls.filter(call => call[0] === '_outscaled.agents.publish' && (call[1] as AgentsSnapshot).focus).map(call => (call[1] as AgentsSnapshot).focus),
+			[{ workspace: '["local","demo"]', terminal: second.id }]);
+	} finally { release(); grid.dispose(); selection.dispose(); }
 });

@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { Health, ScheduleSummary, StreamMessage, Terminal, Workspace } from '@outscaled/protocol';
+import { Health, ScheduleSummary, StreamMessage, Terminal, Workspace, WorkspaceChanges } from '@outscaled/protocol';
 import WebSocket from 'ws';
 import { Backoff } from './servers';
 import { applyMessage, ServerState } from './state';
@@ -12,6 +12,7 @@ import { applyMessage, ServerState } from './state';
 export class Connection {
 	readonly state: ServerState;
 	private url?: string;
+	private selectedWorkspace?: string;
 	private socket?: WebSocket;
 	private controller?: AbortController;
 	private timer?: NodeJS.Timeout;
@@ -114,6 +115,21 @@ export class Connection {
 					request('terminals').then(value => Terminal.array().parse(value))
 				]);
 				const schedules = (await Promise.all(workspaces.map(workspace => request(`workspaces/${encodeURIComponent(workspace.slug)}/schedules`).then(value => ScheduleSummary.array().parse(value))))).flat();
+				const slug = this.selectedWorkspace;
+				if (slug && workspaces.some(workspace => workspace.slug === slug)) {
+					try {
+						const response = await fetch(`${this.url}/v1/workspaces/${encodeURIComponent(slug)}/changes`, { signal: AbortSignal.any([this.controller!.signal, AbortSignal.timeout(10000)]) });
+						if (!response.ok) { throw new Error(`Changes: HTTP ${response.status}`); }
+						const changes = WorkspaceChanges.parse(await response.json());
+						if (generation !== this.generation) { return; }
+						(this.state.changes ??= Object.create(null) as Record<string, WorkspaceChanges>)[slug] = changes;
+						delete this.state.changesErrors?.[slug];
+					} catch (error) {
+						if (generation !== this.generation) { return; }
+						delete this.state.changes?.[slug];
+						(this.state.changesErrors ??= Object.create(null) as Record<string, string>)[slug] = String(error);
+					}
+				}
 				if (generation !== this.generation) {return;}
 				Object.assign(this.state, { health, workspaces, terminals, schedules, online: true, error: undefined });
 				this.settleReadiness();
@@ -135,6 +151,12 @@ export class Connection {
 		if (this.stopped || !this.state.online) {throw new Error('Server offline');}
 		await this.refreshSnapshot();
 		if (this.stopped || !this.state.online) {throw new Error('Server offline');}
+	}
+
+	/** Selection uses this connection's existing stream and snapshot barrier. */
+	async selectChanges(workspace: string | undefined): Promise<void> {
+		this.selectedWorkspace = workspace;
+		if (workspace && this.state.online) { await this.refreshSnapshot(); }
 	}
 
 	refresh(): void {

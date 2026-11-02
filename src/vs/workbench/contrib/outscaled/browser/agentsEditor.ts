@@ -63,6 +63,7 @@ export class AgentsEditor extends EditorPane {
 		this.host.style.height = `${dimension.height}px`;
 		this.owner?.layout();
 	}
+	revealBackgroundAgent(id: string): void { this.background.openAgent(id); }
 	revealTerminal(terminal: string): void {
 		if (this.owner?.hasVisiblePane(terminal)) { this.owner.focus(terminal); }
 		else { this.background.openTerminal(terminal); }

@@ -190,6 +190,10 @@ export class AgentsBackground extends Disposable {
 		}));
 		this.update();
 	}
+	openAgent(id: string): void {
+		const chip = this.chips.get(id);
+		if (chip) { chip.element.scrollIntoView({ block: 'nearest', inline: 'nearest' }); this.showCard(chip); }
+	}
 	openTerminal(terminal: string): void {
 		const chip = [...this.chips.values()].find(chip => chip.model.terminal === terminal);
 		if (chip) { chip.element.scrollIntoView({ block: 'nearest', inline: 'nearest' }); this.showCard(chip); }

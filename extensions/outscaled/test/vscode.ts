@@ -4,7 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 
 // Small API test double. URI behavior comes from VS Code's URI implementation.
-export { URI as Uri } from 'vscode-uri';
+import { URI, Utils } from 'vscode-uri';
+export const Uri = Object.assign(URI, { joinPath: Utils.joinPath });
+export type Uri = URI;
 export enum FileType { Unknown = 0, File = 1, Directory = 2, SymbolicLink = 64 }
 export enum FilePermission { Readonly = 1 }
 export enum FileChangeType { Changed = 1, Created = 2, Deleted = 3 }

@@ -62,3 +62,5 @@
 
 .outscaled-request-banner { flex: none; padding: var(--vscode-spacing-size80) var(--vscode-spacing-size100); color: var(--vscode-terminal-ansiRed); font-size: var(--vscode-fontSize-body2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .outscaled-request-banner[hidden] { display: none; }
+
+.outscaled-title-controls .outscaled-changes-button.quiet { color: var(--vscode-descriptionForeground); border-color: transparent; }

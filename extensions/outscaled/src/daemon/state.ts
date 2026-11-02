@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { z } from 'zod';
-import { Health, LatestLine, ScheduleSummary, StreamMessage, Terminal, TerminalStatus, TerminalRequest, Workspace } from '@outscaled/protocol';
+import { Health, LatestLine, ScheduleSummary, StreamMessage, Terminal, TerminalStatus, TerminalRequest, Workspace, WorkspaceChanges } from '@outscaled/protocol';
 
 export interface ServerState {
 	readonly host: string;
@@ -14,11 +14,13 @@ export interface ServerState {
 	workspaces: Workspace[];
 	terminals: Terminal[];
 	schedules?: ScheduleSummary[];
+	changes?: Record<string, WorkspaceChanges>;
+	changesErrors?: Record<string, string>;
 }
 
 /** Returns true when the notification requires an HTTP snapshot. */
 export function applyMessage(state: ServerState, message: StreamMessage): boolean {
-	if (message.type === 'workspace.changed' || message.type === 'run.started' || message.type === 'run.finished') { return true; }
+	if (message.type === 'workspace.changed' || message.type === 'workspace.changes' || message.type === 'run.started' || message.type === 'run.finished') { return true; }
 	if (message.type === 'server.health') {
 		state.health = Health.parse(message.payload);
 	} else if (message.type === 'terminal.latest_line') {

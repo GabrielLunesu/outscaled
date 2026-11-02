@@ -20,7 +20,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	context.subscriptions.push(files, vscode.workspace.registerFileSystemProvider('ws', files, { isCaseSensitive: true }));
 	const selection = registerWorkspaceSwitching(context, daemons, message => output.appendLine(message));
 	grid = new TerminalGrid(context, daemons, selection, message => output.appendLine(message));
-	context.subscriptions.push(grid);
+	context.subscriptions.push(grid, vscode.workspace.registerTextDocumentContentProvider('outscaled-empty', { provideTextDocumentContent: () => '' }));
 	registerNotifications(context, daemons, grid, message => output.appendLine(message));
 }
 
