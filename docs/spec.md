@@ -9,6 +9,7 @@ One app to create workspaces on any machine you own (your Mac or any VPS), run a
 **Goals**
 
 - **Workspaces anywhere:** pick local or a server; a workspace is a folder agents work in.
+- **Agents first:** the app opens on your agents, not on code. One dialog opens any mix of Claude Code and Codex panes; files, diffs and the editor stay one click away.
 - **Servers registered once**, health-checked continuously.
 - **A herdr-style sidebar:** every workspace and its agents with live status; one click switches workspace.
 - **Native terminal grids:** open 1, 2 or 4 terminals in a workspace with one click and launch Claude Code or Codex in each. No manual terminal juggling.
@@ -22,35 +23,64 @@ One app to create workspaces on any machine you own (your Mac or any VPS), run a
 - Installers, onboarding and versioned releases: v1 is a personal build, published as source on GitHub.
 - Phone access and push notifications.
 - Networking beyond SSH: v1 reaches remote daemons through SSH tunnels.
-- Several workspaces visible at once; v1 switches between them.
+- Several workspaces' grids on screen at once; v1 switches between them.
 - Team accounts or multiple users.
 - Our own agent loop. We host Claude Code and Codex; we don't replace them.
 - Windows hosts.
 
-## Workspaces and terminals
+## The app: agents first
 
-The main screen is a herdr-style sidebar on the left and the selected workspace's terminal grid on the right; the explorer, editor and git view follow whichever workspace is selected.
+The app opens on your agents, not on code. VS Code's chat panel, Copilot, activity bar and status bar are gone; files, diffs and the editor are one click away and work as in VS Code. This design is tuned for agents on your Mac first. VPS workspaces keep working as in Phase 3, and their own design (code sync between machines, a desktop per server) comes later.
+
+**Title bar**, left to right: the workspace and its branch, **New agents** (⌘N), a "2 need you" button (⌘J), Grid / Focus, Agents / Code, **Changes** with a count, and settings.
 
 **Sidebar**
 
-- Workspaces grouped by server; under each, its terminals with agent name and a status dot.
-- Click a workspace and the explorer and terminal grid switch to it. Click a terminal to focus that pane.
-- A badge on each workspace counts terminals that need you, so you see it without opening the workspace.
+- **All agents** at the top opens a board of every agent in every workspace, in columns by status.
+- Below it, the workspaces, each with a status dot and a needs-you badge. Click one, or press ⌘1 to ⌘9, to switch to it; the explorer, editors and agents follow.
+
+**Agents view (home)**
+
+- The selected workspace's agents in a grid of real terminals: Claude Code, Codex or a shell, each attached to its tmux session in `wsd`.
+- Each pane has a header with its name, runtime and status, and a menu: add Claude (⌘D), Codex (⌥⌘D) or a shell to its right or below, or Move to Background (⌘M).
+- **Focus** shows one large pane with the rest as small live panes beside it; click one to swap.
+- The **background strip** along the bottom holds the agents not in the grid: ones you moved there, always-on ones and scheduled ones. Each shows a status dot and its latest line; click one to open its card. A scheduled agent's card shows its prompt, last run, result and next run, with Run Now, Open in Grid, Edit and Pause.
+
+**New agents (⌘N)**
+
+- A text box at the top: type `2x2 claude`, `codex`, `claude right` or `claude every 30m` and the choices below fill in to match.
+- The choices: a layout (the six built-in layouts), the agent in each pane, how it runs (Quick, Always On, or Scheduled with an interval), where it goes (Replace View, Add to View, or Right of the focused pane) and an optional first prompt. Presets, built in or saved per workspace, fill everything in one click.
+- Replacing the view never stops an agent: the agents it replaces move to the background strip.
+
+**Needs you**
+
+- A waiting agent's pane turns red and shows what it asked; its workspace gets a badge, and the title bar counts waiting agents across all workspaces.
+- ⌘J jumps to the next waiting agent in any workspace. The needs-you list can answer a Claude Code permission prompt in place with Allow Once or Deny. The app sends the answer only while the pane still shows that prompt, and otherwise opens the pane.
+- The Dock bounce and in-app notification from Phase 3 stay.
+
+**Code when you want it**
+
+- **Changes** opens a drawer with the workspace's changed files, the agent that changed each one, a diff per file, Open in Editor and Commit.
+- **Code** mode shows VS Code's own explorer, editors, search and source control for the workspace, with a narrow rail on the right listing its agents and their status. Agents brings the grid back as you left it.
+
+**Remembered per workspace:** the layout, which agents are in the grid or the background, Grid or Focus, and Agents or Code.
+
+## Workspaces and terminals
 
 **Terminal grid**
 
 - One-click layouts, drawn below: single, side by side, stacked, 2×2, four across, and two stacked with one full-height pane on the right.
 - Launch presets fill the grid, such as "2 Claude + 2 Codex" or "1 Claude + shell", plus presets saved per workspace.
-- Every pane is a native VS Code terminal in the editor area, attached to a tmux session the daemon owns. Agents keep running when you switch workspace or close the app.
+- Every pane is a native VS Code terminal, attached to a tmux session the daemon owns. Agents keep running when you switch workspace or close the app.
 - Each workspace remembers its grid, and switching back restores it.
 
 &#91;embedded content: grid layouts · 6 built in\]
 
 A launch preset fills panes left to right, top to bottom; in 2 + 1, the full-height right pane comes last.
 
-**Status on terminal tabs**
+**Status on every pane**
 
-| Status | Tab shows | Detected from |
+| Status | Pane shows | Detected from |
 | --- | --- | --- |
 | Idle | Grey dot | Claude Code Stop hook; Codex notify at turn end; shell prompt back |
 | Working | Green spinner | Claude Code UserPromptSubmit and PreToolUse hooks; output activity |
@@ -181,7 +211,7 @@ Agents come in three modes, and every mode reports "needs you" through the same 
 **Modes**
 
 1. **Always-on:** an interactive Claude Code or Codex session in tmux, supervised and restarted on crash. You attach from a VS Code terminal or herdr.
-2. **Scheduled:** every X minutes `wsd` runs a headless command in the workspace (`claude -p "<prompt>"`, `codex exec "<prompt>"`, or any script), logs the output and records a run. If the previous run is still going, the next one is skipped.
+2. **Scheduled:** every X minutes `wsd` starts a fresh Claude Code or Codex session in the agent's terminal with the prompt, so no context carries over from earlier runs. The run ends when the agent goes idle, and its output is saved as the run's log; the terminal keeps showing the last run until the next one starts. Scripts still run headless. If the previous run is still going, the next one is skipped. (Phase 2 ran prompts headless with `claude -p` and `codex exec`; Phase 4 moves them into real terminals, so you can watch a run or answer it when it needs you.)
 3. **One-off:** started from the client with a prompt; recorded as a run.
 
 **Needs-me detection**
@@ -191,7 +221,7 @@ Agents come in three modes, and every mode reports "needs you" through the same 
 - **Scripts:** a non-zero exit fires `run.finished` with an error; a script can also call `ws notify "<message>"`.
 - **Fallback:** a pane with no output for N minutes while its process is alive fires a low-priority "possibly stuck" event.
 
-**Routing:** in the app only. The terminal tab turns red, the workspace gets a badge in the sidebar, and an OS notification fires for `needs_input` and `crashed`.
+**Routing:** in the app only. The pane turns red, the workspace gets a badge in the sidebar, the title bar counts it, and an OS notification fires for `needs_input` and `crashed`.
 
 ## Desktop and browser
 
@@ -206,18 +236,23 @@ Every VPS has its own desktop, set up directly on the host (XFCE plus Selkies fo
 
 ## Client (the fork)
 
-The client is a direct fork of microsoft/vscode (Code-OSS) at the repo root, so the whole app sits in one tree and is patched in place. Branding and Open VSX are set in `product.json`. Most features ship as a built-in extension in `extensions/outscaled/`; core changes live in `src/vs/workbench/contrib/outscaled/` wherever possible, which keeps upstream merges small.
+The client is a direct fork of microsoft/vscode (Code-OSS) at the repo root, so the whole app sits in one tree and is patched in place. Branding and Open VSX are set in `product.json`.
 
-| Feature | How | Core patch |
+Phase 3 built the client as a built-in extension on stock VS Code. Phase 4 reworks the main window around agents (see [The app](#the-app-agents-first)) as our own UI on VS Code's regular workbench: the agents view, title bar, New agents dialog, background strip, changes drawer and All agents board are core code in `src/vs/workbench/contrib/outscaled/`, and chat, Copilot, the activity bar and the status bar are switched off. Code mode is the workbench's own explorer, editors, search and source control, so editing stays native.
+
+We don't build on upstream's Agents Window (`src/vs/sessions/`, opened with `workbench.action.openAgentsWindow`). It is a separate workbench of its own, over 3,000 lines in `browser/workbench.ts` alone, built around Copilot chat sessions rather than terminals, and every upstream merge would have to follow its changes. It is still a useful reference for its layout.
+
+| Feature | How | Where |
 | --- | --- | --- |
-| Workspace sidebar | Tree view fed by each daemon, with status dots and need-you badges | No |
-| Switch workspace in one window | Multi-root window over `ws://<server>/<workspace>`; switching changes which root and which terminals show | Yes: hide other workspaces' terminals and restore each grid |
-| Terminal grid and launch presets | Editor-area terminals placed with the editor layout command (2×2 and others), each attached to a daemon tmux session | No |
-| Live status on terminal tabs | Extensions can set a terminal's icon and colour only at creation, so live changes need core | Yes |
-| Needs-you notifications | OS toast through VS Code's own toast service; clicking it focuses that terminal. Extensions can't show clickable OS notifications | Yes |
-| Agent dashboard | Webview over every daemon's events | No |
-| PC panel | Webview embedding the server's Selkies URL | No |
-| Branding, onboarding, add-server flow | Later; v1 is a personal build | Yes |
+| Agents view, title bar, New agents dialog, background strip, changes drawer, All agents board | Core UI on the regular workbench | `src/vs/workbench/contrib/outscaled/` |
+| No chat, Copilot, activity bar or status bar | Settings defaults and `product.json`; a core patch only where no setting covers it | `product.json`, `extensions/outscaled/`, core |
+| Panes | VS Code terminals attached to `wsd` tmux sessions (`ws attach`), placed in the agents view | Core |
+| Live status on panes and in the sidebar | As in Phase 3: extensions can't change a terminal's icon after creation, so core does it | Core |
+| Code mode | The workbench's own explorer, editors, search and source control | Upstream, unchanged |
+| Daemon connections, SSH tunnels, workspace switching, presets | The built-in extension, as in Phase 3; the Phase 4 spike decides whether any of it moves into core | `extensions/outscaled/` |
+| Needs-you notifications | As in Phase 3: OS toast, Dock bounce and an in-app message with Focus | Core and extension |
+| PC panel | Webview embedding the server's Selkies URL (Phase 5) | Extension |
+| Branding, onboarding, add-server flow | Later; v1 is a personal build | Core |
 
 VPS workspaces are daemon-served: the explorer, editor and search read files through the daemon, so switching is instant and language servers run on your Mac. A full remote window (open-remote-ssh) can come later if heavy remote coding needs it.
 
@@ -250,7 +285,7 @@ TypeScript end to end: the daemon, the CLI, the extension and the fork share one
 
 ## Roadmap
 
-v1 is phases 1 to 4, desktop included. The daemon comes first: phases 1 and 2 are usable from the CLI and herdr, so the fork in phase 3 starts from a working system.
+v1 is phases 1 to 5, desktop included. The daemon comes first: phases 1 and 2 are usable from the CLI and herdr, so the fork in phase 3 starts from a working system. Phase 4 reworks the app around agents on your Mac before phase 5 adds a desktop and browser to each VPS; the roadmap drawing below predates that split.
 
 &#91;embedded content: roadmap · 5 phases, a gate after each\]
 
@@ -264,11 +299,15 @@ Everything an agent needs to start: the decisions, the repo layout, and a done-w
 
 | Decision | Choice |
 | --- | --- |
-| v1 scope | Phases 1 to 4: daemon, status and agent terminals, client fork, desktop and browser |
+| v1 scope | Phases 1 to 5: daemon, status and agent terminals, client fork, agents-first app, desktop and browser |
+| Build order | Local (Mac) workflows first, with UX above all; VPS-specific work (code sync between machines, a desktop per server) after |
 | Remote workspaces | Daemon-served files in one window; no VS Code server on the VPS |
 | Audience | Personal build, open source from day one (MIT); no installer, onboarding or releases |
 | Daemon | Bun + TypeScript, compiled to one binary |
-| Client | Fork of microsoft/vscode at the repo root; features in a built-in extension, core changes only for workspace switching and live tab status |
+| Client | Fork of microsoft/vscode at the repo root. From phase 4 the main window is our own agents-first UI, built as core code in `src/vs/workbench/contrib/outscaled/` on VS Code's regular workbench rather than a separate window; the built-in extension keeps the daemon plumbing |
+| Latest line | The newest line an agent wrote: for Claude Code its latest transcript message, for Codex its latest message, for a shell the last non-blank line on screen |
+| Who changed a file | Recorded by `wsd`: Claude Code from its edit-tool hooks; Codex from the files that changed during its turn, so it's approximate while several agents work at once |
+| Answering prompts | Allow Once and Deny send the key for that option to the pane, only while its screen still shows that permission prompt |
 | Remote access | SSH tunnels opened by the client |
 | CLI server target | `--on local` or an SSH host/alias from `~/.ssh/config`; server details stay outside the repo |
 | Server list | `~/.config/outscaled/servers.toml` lists the SSH hosts that `ws status` covers; `local` is always included |
@@ -282,8 +321,8 @@ Everything an agent needs to start: the decisions, the repo layout, and a done-w
 
 ```
 /                                    microsoft/vscode fork: src/, build/, product.json, package.json
-src/vs/workbench/contrib/outscaled/  core changes: workspace switching, live tab status
-extensions/outscaled/                built-in extension: sidebar, grid, presets, PC panel
+src/vs/workbench/contrib/outscaled/  core: the agents-first UI, live status, notifications
+extensions/outscaled/                built-in extension: daemon plumbing, presets, theme, PC panel
 daemon/                              wsd + ws CLI (Bun, TypeScript)
 protocol/                            shared API and event types (zod schemas)
 desktop/                             VPS desktop setup (XFCE + Selkies) + Chrome launcher
@@ -316,14 +355,25 @@ scripts/serial.sh                    one build or full test suite at a time
 - [x] Tab colours change live (grey, green, red), and switching back to a workspace restores its grid.
 - [ ] Needs-you fires an OS notification; clicking it focuses that terminal.
 
-**Phase 4 · Desktop and browser: done when**
+**Phase 4 · Agents-first app (local): done when**
+
+- [ ] The app opens on the agents view: the sidebar lists workspaces with status dots and needs-you badges, the main area shows the selected workspace's agents as live terminals, and the title bar holds New agents, the needs-you count, Grid / Focus, Agents / Code and Changes. The chat panel, Copilot, activity bar and status bar appear nowhere, and ⌘1 to ⌘9 switch workspace.
+- [ ] New agents (⌘N) opens "2 Claude + 2 Codex" as a 2×2 grid in two clicks, and typing `2x2 claude`, `codex right` or `claude every 30m` fills in the same choices. Replace View moves the replaced agents to the background strip without stopping them.
+- [ ] A pane's menu, ⌘D or ⌥⌘D adds Claude or Codex to its right or below, and Move to Background (⌘M) takes a pane out of the grid while its agent keeps running.
+- [ ] The background strip shows every agent not in the grid with its status dot and latest line, updating live, and clicking one opens it in the grid. A scheduled agent's card shows its prompt, last run and next run, and Run Now starts a run.
+- [ ] Each scheduled run starts a fresh Claude Code or Codex session in a real terminal that you can open in the grid, and its output is kept as the run's log.
+- [ ] A waiting agent turns its pane red with its request, badges its workspace and counts in the title bar. ⌘J jumps to it from any workspace, and Allow Once or Deny in the needs-you list answers a Claude Code permission prompt without opening the pane.
+- [ ] Changes lists each changed file with the agent that changed it and opens its diff in one click. Code mode shows the explorer, editors, search and source control for the workspace, and Agents brings the grid back as it was.
+- [ ] Focus and the All agents board work, and each workspace remembers its layout, which agents are in the grid or the background, and its mode, after switching workspace and after restarting the app.
+
+**Phase 5 · Desktop and browser: done when**
 
 - [ ] `ws desktop setup <server>` installs XFCE + Selkies on the VPS host, and its desktop shows in the PC panel through the SSH tunnel.
 - [ ] `ws browser open <profile>` starts Chrome with its own profile and CDP port, and the workspace's `.mcp.json` points Playwright MCP at it.
 - [ ] An agent completes a browser task in a profile you logged into, while you watch in the PC panel and can take over.
 - [ ] An app you install on one VPS appears on that server's desktop and not on the others.
 
-**Biggest risk:** the two core patches in phase 3. Before building features there, run a spike: get the fork running from source, then prototype live tab colours and per-workspace terminal restore. If either is much harder than expected, we learn it before the extension work depends on it.
+**Biggest risk (phase 4):** reworking the main window on VS Code's regular workbench. Before building the features, run a spike in a throwaway worktree: switch off chat, Copilot, the activity bar and the status bar; add a title bar with New agents and Agents / Code; show a 2×2 grid of live `wsd` terminals as the agents view; and switch to Code mode and back without the terminals restarting. The spike also settles whether the daemon connection stays in the extension or moves into core. If the regular workbench fights this layout, stop and reconsider a separate window like upstream's Agents Window before building on either.
 
 ## Open source workflow
 
@@ -339,4 +389,6 @@ Outscaled is public on GitHub from the first commit, but run like a personal pro
 
 ## Open questions
 
-None left. Launch presets are defined in `presets.toml`; "2 Claude + 2 Codex" ships as the default.
+- Adding a workspace from the app. Today it's `ws new` on the command line, and the phase 4 design doesn't cover it yet.
+
+Launch presets are defined in `presets.toml`; "2 Claude + 2 Codex" ships as the default.
