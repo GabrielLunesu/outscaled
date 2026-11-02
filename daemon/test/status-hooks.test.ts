@@ -148,7 +148,7 @@ test("each hook changes status and time once, stores events atomically and ignor
       changes++;
       if (expected === "needs_input") needsInput++;
       const events = app.state.listEvents().filter(event => event.type === "terminal.status");
-      expect(events.some(event => JSON.stringify(event.payload) === JSON.stringify({ terminal: terminal.id, oldStatus: previous, newStatus: expected }) && event.time === current.statusChangedAt)).toBe(true);
+      expect(events.some(event => JSON.stringify(event.payload) === JSON.stringify({ terminal: terminal.id, oldStatus: previous, newStatus: expected, request: current.request }) && event.time === current.statusChangedAt)).toBe(true);
     } else expect(current.statusChangedAt).toBe(before.statusChangedAt);
     expect(app.state.listEvents().filter(event => event.type === "terminal.status")).toHaveLength(changes);
     expect(app.state.listEvents().filter(event => event.type === "agent.needs_input")).toHaveLength(needsInput);

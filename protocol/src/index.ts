@@ -62,6 +62,12 @@ export const TerminalRuntime = z.enum(["claude-code", "codex"]);
 export type TerminalRuntime = z.infer<typeof TerminalRuntime>;
 export const TerminalStatus = z.enum(["starting", "working", "needs_input", "idle"]);
 export type TerminalStatus = z.infer<typeof TerminalStatus>;
+export const PermissionOption = z.object({ number: z.number().int().min(1).max(9), label: z.string().min(1) });
+export const PermissionPrompt = z.object({ question: z.string().min(1), options: z.array(PermissionOption).min(2) });
+export type PermissionPrompt = z.infer<typeof PermissionPrompt>;
+export const TerminalRequest = z.object({ message: z.string().nullable(), permission: PermissionPrompt.nullable() });
+export type TerminalRequest = z.infer<typeof TerminalRequest>;
+export const LatestLine = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\r\n]/.test(value)).nullable();
 export const Terminal = z.object({
   id: z.string().min(1),
   workspace: Slug,
@@ -73,6 +79,8 @@ export const Terminal = z.object({
   runtime: TerminalRuntime.nullable(),
   status: TerminalStatus.nullable(),
   statusChangedAt: timestamp.nullable(),
+  request: TerminalRequest.nullable().default(null),
+  latestLine: LatestLine.default(null),
   restarts: count,
   pid: z.number().int().positive().nullable(),
   createdAt: timestamp,
@@ -106,10 +114,17 @@ export type TerminalInputRequest = z.infer<typeof TerminalInputRequest>;
 export const TerminalOutputLines = z.number().int().min(1).max(5000).default(200);
 export const TerminalOutput = z.object({ text: z.string() });
 
+export const TerminalAnswerRequest = z.strictObject({ answer: z.enum(["allow_once", "deny"]) });
+export type TerminalAnswerRequest = z.infer<typeof TerminalAnswerRequest>;
+export const TerminalAnswer = z.object({ question: z.string(), option: PermissionOption });
+export type TerminalAnswer = z.infer<typeof TerminalAnswer>;
+
 // Preserve Claude's raw JSON, including fields added by newer versions.
 export const ClaudeCodeHookPayload = z.looseObject({
   hook_event_name: z.string().min(1),
   notification_type: z.string().optional(),
+  message: z.string().optional(),
+  transcript_path: z.string().optional(),
 });
 export type ClaudeCodeHookPayload = z.infer<typeof ClaudeCodeHookPayload>;
 export const ClaudeCodeHookRequest = z.object({
@@ -120,6 +135,7 @@ export const ClaudeCodeHookRequest = z.object({
 // Codex appends one JSON argument to its notify argv; preserve future fields.
 export const CodexHookPayload = z.looseObject({
   type: z.string().min(1),
+  "last-assistant-message": z.string().optional(),
 });
 export type CodexHookPayload = z.infer<typeof CodexHookPayload>;
 export const CodexHookRequest = z.object({
@@ -143,11 +159,15 @@ export const Event = z.object({
 });
 export type Event = z.infer<typeof Event>;
 
-// Stored events retain their HTTP/SQLite shape. These two notifications are
+// Stored events retain their HTTP/SQLite shape. The notifications below are
 // live-only: clients fetch current state over HTTP on connection or reconnect.
 export const WorkspaceChanged = z.object({ type: z.literal("workspace.changed"), workspace: Slug });
 export const ServerHealth = z.object({ type: z.literal("server.health"), payload: Health });
-export const StreamMessage = z.union([Event, WorkspaceChanged, ServerHealth]);
+export const TerminalLatestLine = z.object({
+  type: z.literal("terminal.latest_line"), workspace: Slug, terminal: z.string().min(1),
+  payload: z.object({ latestLine: LatestLine }),
+});
+export const StreamMessage = z.union([Event, WorkspaceChanged, ServerHealth, TerminalLatestLine]);
 export type StreamMessage = z.infer<typeof StreamMessage>;
 
 export const ScheduleInterval = z.string().regex(/^[1-9]\d*[smhd]$/).refine(value => {

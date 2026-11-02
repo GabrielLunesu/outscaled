@@ -1,4 +1,5 @@
 import { ClaudeCodeHookRequest, CodexHookRequest, type ClaudeCodeHookPayload, type TerminalStatus } from "@outscaled/protocol";
+import { latestLine, transcriptLatestLine } from "../attention";
 import type { Schedules } from "../schedules";
 import type { RouteContext } from "../context";
 import { apiError, validateBody } from "../http";
@@ -34,13 +35,22 @@ export function createHooksRoute({ state, terminals }: RouteContext, schedules?:
       if (terminal.state !== "running") return new Response(null, { status: 204 });
       if (runtime === "codex") {
         if (body.payload.type === "agent-turn-complete") {
+          const message = body.payload["last-assistant-message"];
+          const line = typeof message === "string" ? latestLine(message) : null;
+          if (line) state.updateLatestLine(terminal.id, line, true);
           terminals.codexTurnComplete(terminal.id);
           await schedules?.terminalIdle(terminal.id);
         }
       } else {
-        const status = claudeStatus(ClaudeCodeHookRequest.parse(body).payload);
+        const payload = ClaudeCodeHookRequest.parse(body).payload;
+        if (payload.transcript_path) {
+          const line = await transcriptLatestLine(payload.transcript_path);
+          if (line) state.updateLatestLine(terminal.id, line, true);
+        }
+        const status = claudeStatus(payload);
         if (status && !(body.payload.hook_event_name === "SessionStart" && schedules?.runningTerminal(terminal.id))) {
-          state.updateTerminalStatus(terminal.id, status);
+          if (status === "needs_input") await terminals.captureRequest(terminal.id, payload.message);
+          else state.updateTerminalStatus(terminal.id, status);
         }
         if (body.payload.hook_event_name === "Stop") await schedules?.terminalIdle(terminal.id);
       }

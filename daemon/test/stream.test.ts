@@ -98,7 +98,7 @@ test("two clients receive stored hook events in order and disconnecting one leav
   for (const client of [first, second]) {
     const event = Event.parse(await received(client, "terminal.status"));
     expect(event).toEqual(app!.state.getEvent(event.id)!);
-    expect(event.payload).toEqual({ terminal: terminal.id, oldStatus: "starting", newStatus: "working" });
+    expect(event.payload).toEqual({ terminal: terminal.id, oldStatus: "starting", newStatus: "working", request: null });
   }
   expect(first.messages).toEqual(second.messages);
   const closed = new Promise<void>(resolve => { first.socket.onclose = () => resolve(); });

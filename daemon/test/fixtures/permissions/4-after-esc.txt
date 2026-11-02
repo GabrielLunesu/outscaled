@@ -1,0 +1,36 @@
+
+ ▐▛███▛█   Claude Code v2.1.316
+▝▜██████▀  Test 0.0 with basic effort · Sample xxx
+ ▝▝   ▝▝   <workspace>_______________________
+
+
+❯ Create a file named notes.txt containing the word hi. Do nothing else.
+
+⏺ Write(notes.txt)
+  ⎿  User rejected write to notes.txt
+      1 hi
+
+✻ Churned for 5s · done 4:54 PM
+
+❯ Run the shell command: touch made-by-bash.txt
+
+  Ran 1 shell command
+  ⎿  Interrupted · What should Claude do instead?
+
+✻ Worked for 2s · done 4:54 PM
+
+
+
+
+
+
+
+
+
+
+
+                                                                                           ◉ xhigh · /effort
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏸ manual mode on · ? for shortcuts

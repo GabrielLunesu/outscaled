@@ -1,9 +1,10 @@
 import { userInfo } from "node:os";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import type { OpenTerminalRequest, Terminal, TerminalInputRequest, TerminalRuntime, Workspace } from "@outscaled/protocol";
+import type { OpenTerminalRequest, Terminal, TerminalInputRequest, TerminalAnswerRequest, TerminalAnswer, TerminalRuntime, Workspace } from "@outscaled/protocol";
 import type { State } from "./state";
-import { Tmux } from "./tmux";
+import { latestLine, permissionPrompt } from "./attention";
+import { Tmux, type TmuxPane } from "./tmux";
 
 export class TerminalConflict extends Error {}
 export class TerminalNotFound extends Error {}
@@ -64,6 +65,7 @@ export function writeClaudeSettings(stateDir: string): string {
 
 export class Terminals {
   private pending: Promise<unknown> = Promise.resolve();
+  private readonly screenWatches = new Map<string, { generation: number | null; activity: number; pid: number; readAt: number; dirty: boolean }>();
   private readonly codexNotifyTimes = new Map<string, number>();
 
   constructor(
@@ -179,7 +181,7 @@ export class Terminals {
           this.state.insertTerminal({
             id, workspace: workspace.slug, name: request.name,
             command, session, alwaysOn: request.alwaysOn ?? false,
-            runtime, status: null, statusChangedAt: null,
+            runtime, status: null, statusChangedAt: null, request: null, latestLine: null,
             state: "running", restarts: 0, pid, createdAt,
           });
           if (scheduled) this.state.ownScheduledTerminal(workspace.slug, request.name, id);
@@ -241,6 +243,72 @@ export class Terminals {
         return this.state.updateTerminalStatus(terminal.id, "working")!;
       }
       return terminal;
+    });
+  }
+
+  // Called under the lifecycle lock by hooks and supervision. A later screen
+  // may fill a request captured before Claude finished drawing its prompt.
+  async captureRequest(id: string, message?: string): Promise<void> {
+    const terminal = this.state.getTerminal(id);
+    if (!terminal || terminal.runtime !== "claude-code") return;
+    let parsed = null;
+    try { parsed = permissionPrompt(await this.tmux.captureScreen(`=${terminal.session}:`)); } catch { /* Pane may have exited. */ }
+    this.state.updateTerminalStatus(id, "needs_input", {
+      message: message ?? terminal.request?.message ?? null,
+      permission: terminal.request?.permission ?? parsed?.prompt ?? null,
+    }, this.state.requestScreenHash(id) ?? parsed?.fingerprint ?? null);
+  }
+
+  async refreshScreen(terminal: Terminal, pane: TmuxPane): Promise<void> {
+    const now = Date.now();
+    let watch = this.screenWatches.get(terminal.id);
+    if (!watch || watch.pid !== pane.pid) {
+      watch = { generation: pane.outputGeneration, activity: pane.windowActivity, pid: pane.pid, readAt: -Infinity, dirty: true };
+      this.screenWatches.set(terminal.id, watch);
+    }
+    watch.dirty ||= watch.generation !== pane.outputGeneration || watch.activity !== pane.windowActivity;
+    watch.generation = pane.outputGeneration;
+    watch.activity = pane.windowActivity;
+    if (!watch.dirty || now - watch.readAt < 1000) return;
+    watch.readAt = now;
+    // On older tmux, output later in the same timestamp bucket is invisible.
+    // Take a trailing sample after that bucket expires as well.
+    watch.dirty = pane.outputGeneration === null && now < (pane.windowActivity + 1) * 1000;
+    const needsPrompt = terminal.status === "needs_input" && !terminal.request?.permission;
+    if (this.state.hasAgentLatestLine(terminal.id) && !needsPrompt) return;
+    const screen = await this.tmux.captureScreen(pane.pane);
+    if (!this.state.hasAgentLatestLine(terminal.id)) this.state.updateLatestLine(terminal.id, latestLine(screen));
+    if (needsPrompt) {
+      const parsed = permissionPrompt(screen);
+      if (parsed) this.state.updateTerminalStatus(terminal.id, "needs_input", {
+        message: terminal.request?.message ?? null, permission: parsed.prompt,
+      }, parsed.fingerprint);
+    }
+  }
+
+  forgetScreens(ids: Set<string>): void {
+    for (const id of this.screenWatches.keys()) if (!ids.has(id)) this.screenWatches.delete(id);
+  }
+
+  answer(workspace: string, name: string, request: TerminalAnswerRequest): Promise<TerminalAnswer> {
+    return this.serial(async () => {
+      const { terminal, pane } = await this.runningPane(workspace, name);
+      if (terminal.runtime !== "claude-code") throw new TerminalConflict("Only Claude Code permission prompts can be answered");
+      if (terminal.status !== "needs_input") throw new TerminalConflict("Terminal is not waiting for input");
+      let screen: string;
+      try { screen = await this.tmux.captureScreen(pane); }
+      catch { throw new TerminalConflict("Unable to read the current permission prompt"); }
+      const parsed = permissionPrompt(screen);
+      if (!parsed) throw new TerminalConflict("Screen does not show a recognised permission prompt");
+      if (!terminal.request?.permission || this.state.requestScreenHash(terminal.id) !== parsed.fingerprint ||
+          JSON.stringify(terminal.request.permission) !== JSON.stringify(parsed.prompt)) {
+        throw new TerminalConflict("Permission prompt changed or was not captured; open the terminal to review it");
+      }
+      const option = parsed.prompt.options.find(option => option.label === (request.answer === "allow_once" ? "Yes" : "No"))!;
+      await this.tmux.sendKeys(pane, [String(option.number)]);
+      // Consumes the snapshot, so a double click cannot answer a subsequent prompt.
+      this.state.updateTerminalStatus(terminal.id, "working");
+      return { question: parsed.prompt.question, option };
     });
   }
 

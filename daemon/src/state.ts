@@ -1,19 +1,21 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { Event, Run, Schedule, Terminal, TerminalStatus, Workspace, type StreamMessage } from "@outscaled/protocol";
+import { Event, LatestLine, Run, Schedule, Terminal, TerminalStatus, TerminalRequest, Workspace, type StreamMessage } from "@outscaled/protocol";
 import { migrate } from "./migrations";
 
 type WorkspaceRow = Omit<Workspace, "inPlace"> & { inPlace: number };
-type TerminalRow = Omit<Terminal, "alwaysOn"> & { alwaysOn: number };
+type TerminalRow = Omit<Terminal, "alwaysOn" | "request"> & { alwaysOn: number; request: string | null; requestScreenHash: string | null; latestLineFromAgent: number };
 type EventRow = Omit<Event, "payload" | "acked"> & { payload: string; acked: number };
 const workspaceFromRow = (row: WorkspaceRow): Workspace => ({ ...row, inPlace: Boolean(row.inPlace) });
-const terminalFromRow = (row: TerminalRow): Terminal => ({ ...row, alwaysOn: Boolean(row.alwaysOn) });
+const terminalFromRow = ({ requestScreenHash, latestLineFromAgent, ...row }: TerminalRow): Terminal =>
+  ({ ...row, alwaysOn: Boolean(row.alwaysOn), request: row.request === null ? null : JSON.parse(row.request) });
 const eventFromRow = (row: EventRow): Event => ({ ...row, payload: JSON.parse(row.payload), acked: Boolean(row.acked) });
 
 export class State {
   readonly db: Database;
   private closed = false;
+  private readonly latestNotifications = new Map<string, { at: number; line: string | null; timer?: ReturnType<typeof setTimeout> }>();
 
   constructor(path: string, private readonly publish?: (message: StreamMessage) => void) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
@@ -28,7 +30,11 @@ export class State {
     }
   }
 
-  close(): void { this.closed = true; this.db.close(); }
+  close(): void {
+    this.closed = true;
+    for (const pending of this.latestNotifications.values()) clearTimeout(pending.timer);
+    this.db.close();
+  }
 
   // Callers also use outer SQLite transactions. Defer until their synchronous
   // commit, and discard notifications for writes that rolled back.
@@ -36,8 +42,27 @@ export class State {
     if (!this.publish) return;
     const committed = !this.db.inTransaction;
     queueMicrotask(() => {
-      if (!this.closed && (committed || persisted())) this.publish!(message);
+      if (!this.closed && (committed || persisted())) this.broadcast(message);
     });
+  }
+
+  private broadcast(message: StreamMessage): void {
+    if (message.type !== "terminal.latest_line") {
+      this.publish?.(message);
+      return;
+    }
+    const id = message.terminal!;
+    const previous = this.latestNotifications.get(id);
+    const emit = () => {
+      const terminal = this.getTerminal(id);
+      if (!terminal) return;
+      if (previous) { clearTimeout(previous.timer); previous.timer = undefined; }
+      if (previous && previous.line === terminal.latestLine) return;
+      this.latestNotifications.set(id, { at: Date.now(), line: terminal.latestLine });
+      this.publish?.({ type: "terminal.latest_line", workspace: terminal.workspace, terminal: id, payload: { latestLine: terminal.latestLine } });
+    };
+    if (!previous || Date.now() - previous.at >= 1000) emit();
+    else if (!previous.timer) previous.timer = setTimeout(emit, 1000 - (Date.now() - previous.at));
   }
 
   insertWorkspace(value: Workspace): Workspace {
@@ -69,10 +94,10 @@ export class State {
   insertTerminal(value: Terminal): Terminal {
     const t = Terminal.parse(value);
     this.db.query(`INSERT INTO terminals
-      (id, workspace, name, command, session, alwaysOn, state, restarts, pid, createdAt, runtime, status, statusChangedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+      (id, workspace, name, command, session, alwaysOn, state, restarts, pid, createdAt, runtime, status, statusChangedAt, request, latestLine)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
       t.id, t.workspace, t.name, t.command, t.session, Number(t.alwaysOn), t.state, t.restarts, t.pid, t.createdAt,
-      t.runtime, t.status, t.statusChangedAt,
+      t.runtime, t.status, t.statusChangedAt, t.request === null ? null : JSON.stringify(t.request), t.latestLine,
     );
     this.announce({ type: "workspace.changed", workspace: t.workspace }, () => this.getTerminal(t.id) !== null);
     return t;
@@ -111,23 +136,46 @@ export class State {
     ).get()!;
   }
 
-  updateTerminalStatus(id: string, status: TerminalStatus): Terminal | null {
+  updateTerminalStatus(id: string, status: TerminalStatus, request?: TerminalRequest | null, screenHash?: string | null): Terminal | null {
     TerminalStatus.parse(status);
     return this.db.transaction(() => {
       const current = this.getTerminal(id);
-      if (!current || !current.runtime || current.status === status) return current;
+      if (!current || !current.runtime) return current;
+      const nextRequest = status === "needs_input" ? (request === undefined ? current.request : request) : null;
+      if (current.status === status && JSON.stringify(current.request) === JSON.stringify(nextRequest)) return current;
+      const changed = current.status !== status;
       const time = new Date().toISOString();
-      this.db.query("UPDATE terminals SET status = ?, statusChangedAt = ? WHERE id = ?").run(status, time, id);
+      this.db.query("UPDATE terminals SET status = ?, statusChangedAt = ?, request = ?, requestScreenHash = ? WHERE id = ?")
+        .run(status, changed ? time : current.statusChangedAt, nextRequest === null ? null : JSON.stringify(nextRequest),
+          status === "needs_input" ? (screenHash === undefined ? this.requestScreenHash(id) : screenHash) : null, id);
       const event = {
         id: crypto.randomUUID(), type: "terminal.status", workspace: current.workspace,
-        terminal: id, payload: { terminal: id, oldStatus: current.status, newStatus: status }, time, acked: false,
+        terminal: id, payload: { terminal: id, oldStatus: current.status, newStatus: status, request: nextRequest }, time, acked: false,
       };
       this.insertEvent(event);
-      if (status === "needs_input") {
+      if (status === "needs_input" && changed) {
         this.insertEvent({ ...event, id: crypto.randomUUID(), type: "agent.needs_input" });
       }
       return this.getTerminal(id);
     })();
+  }
+
+  requestScreenHash(id: string): string | null {
+    return this.db.query<{ requestScreenHash: string | null }, [string]>("SELECT requestScreenHash FROM terminals WHERE id = ?").get(id)?.requestScreenHash ?? null;
+  }
+
+  hasAgentLatestLine(id: string): boolean {
+    return Boolean(this.db.query<{ latestLineFromAgent: number }, [string]>("SELECT latestLineFromAgent FROM terminals WHERE id = ?").get(id)?.latestLineFromAgent);
+  }
+
+  updateLatestLine(id: string, line: string | null, fromAgent = false): void {
+    LatestLine.parse(line);
+    const terminal = this.getTerminal(id);
+    if (!terminal || (!fromAgent && this.hasAgentLatestLine(id))) return;
+    this.db.query("UPDATE terminals SET latestLine = ?, latestLineFromAgent = ? WHERE id = ?").run(line, Number(fromAgent), id);
+    if (line === terminal.latestLine) return;
+    this.announce({ type: "terminal.latest_line", workspace: terminal.workspace, terminal: id, payload: { latestLine: line } },
+      () => this.getTerminal(id)?.latestLine === line);
   }
 
   insertEvent(value: Event): Event {

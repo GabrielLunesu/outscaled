@@ -169,7 +169,7 @@ for (const runtime of ["codex", "claude-code"] as const) {
     await eventually(() => row(terminal).restarts === 1);
     expect(row(terminal)).toMatchObject({ state: "running", status: "starting" });
     expect(app.state.listEvents().filter(e => e.type === "terminal.status").at(-1)?.payload)
-      .toEqual({ terminal: terminal.id, oldStatus: "idle", newStatus: "starting" });
+      .toEqual({ terminal: terminal.id, oldStatus: "idle", newStatus: "starting", request: null });
     const shell = await open("sleep 600", true, "shell");
     process.kill(shell.pid!, "SIGKILL");
     await eventually(() => row(shell).restarts === 1);
