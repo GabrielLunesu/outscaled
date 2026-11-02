@@ -23,6 +23,8 @@ import { AgentsInput } from './agentsEditor.js';
 import { IAgentsService } from './agentsService.js';
 import { agentsSidebarId } from './agentsSidebar.js';
 import './media/agentsView.css';
+import './agentsPaneActions.js';
+import { agentsPaneCommandIds } from './agentsPaneContext.js';
 
 const IAgentsWorkbench = createDecorator<IAgentsWorkbench>('outscaledAgentsWorkbench');
 interface IAgentsWorkbench {
@@ -137,7 +139,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 	'window.commandCenter': true,
 	'workbench.layoutControl.enabled': false,
 	'workbench.startupEditor': 'none',
-	'terminal.integrated.commandsToSkipShell': ['outscaled.agents.new', ...Array.from({ length: 9 }, (_, index) => `outscaled.switchWorkspace${index + 1}`)]
+	'terminal.integrated.commandsToSkipShell': ['outscaled.agents.new', ...agentsPaneCommandIds, ...Array.from({ length: 9 }, (_, index) => `outscaled.switchWorkspace${index + 1}`)]
 } }]);
 
 class AgentsStartup implements IWorkbenchContribution {

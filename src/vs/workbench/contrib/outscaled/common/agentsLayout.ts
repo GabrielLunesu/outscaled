@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 export type AgentsLayout = { type: 'pane'; terminal: string | null } | {
-	type: 'split'; direction: 'right' | 'down'; children: AgentsLayout[];
+	type: 'split'; direction: 'right' | 'down'; children: AgentsLayout[]; sizes?: number[];
 };
 export const layoutIds = ['single', 'side-by-side', 'stacked', '2x2', 'four-across', '2+1'] as const;
 export type LayoutId = typeof layoutIds[number];
@@ -36,6 +36,32 @@ export function splitPane(tree: AgentsLayout, terminal: string, added: string, d
 	return { ...tree, children: tree.children.map(child => splitPane(child, terminal, added, direction)) };
 }
 
+/** Relative weights keep old trees equal-sized and survive changes in window dimensions. */
+export function splitSizes(tree: Extract<AgentsLayout, { type: 'split' }>): number[] {
+	const sizes = tree.sizes ?? tree.children.map(() => 1);
+	const total = sizes.reduce((sum, size) => sum + size, 0);
+	return sizes.map(size => size / total);
+}
+
+/** Remove a leaf, collapse its ancestors, and equalize only splits whose child count changes. */
+export function removePane(tree: AgentsLayout, terminal: string): AgentsLayout {
+	const remove = (node: AgentsLayout): AgentsLayout | undefined => {
+		if (node.type === 'pane') { return node.terminal === terminal ? undefined : node; }
+		const children = node.children.map(remove).filter((child): child is AgentsLayout => !!child);
+		if (!children.length) { return undefined; }
+		if (children.length === 1) { return children[0]; }
+		return children.length === node.children.length ? { ...node, children } : { type: 'split', direction: node.direction, children };
+	};
+	return remove(tree) ?? { type: 'pane', terminal: null };
+}
+
+/** A delayed resize may update weights, but must never undo newer membership or topology. */
+export function sameLayoutStructure(left: AgentsLayout, right: AgentsLayout): boolean {
+	return left.type === 'pane' ? right.type === 'pane' && left.terminal === right.terminal
+		: right.type === 'split' && left.direction === right.direction && left.children.length === right.children.length &&
+			left.children.every((child, index) => sameLayoutStructure(child, right.children[index]));
+}
+
 /** Leave empty slots when a daemon identity disappears; never bind a reused name. */
 export function reconcileLayout(tree: AgentsLayout, terminals: ReadonlySet<string>): AgentsLayout {
 	return tree.type === 'pane' ? { ...tree, terminal: tree.terminal !== null && terminals.has(tree.terminal) ? tree.terminal : null }
@@ -53,5 +79,7 @@ export function isAgentsLayout(value: unknown, depth = 0, seen = new Set<string>
 	}
 	return tree.type === 'split' && (tree.direction === 'right' || tree.direction === 'down') &&
 		Array.isArray(tree.children) && tree.children.length >= 2 && tree.children.length <= 64 &&
+		(tree.sizes === undefined || (Array.isArray(tree.sizes) && tree.sizes.length === tree.children.length &&
+			tree.sizes.every(size => typeof size === 'number' && Number.isFinite(size) && size > 0) && Number.isFinite(tree.sizes.reduce((sum, size) => sum + size, 0)))) &&
 		tree.children.every(child => isAgentsLayout(child, depth + 1, seen));
 }

@@ -27,6 +27,8 @@ export type AgentsRequest = { version: 1; action: 'newAgents' } |
 	{ version: 1; action: 'savePreset'; workspace: string; name: string; choices: AgentsLaunch } |
 	{ version: 1; action: 'launch'; workspace: string; choices: AgentsLaunch; focused?: string } |
 	{ version: 1; action: 'switch'; workspace: string } |
+	{ version: 1; action: 'background'; workspace: string; terminal: string; focused?: string } |
+	{ version: 1; action: 'resize'; workspace: string; layout: AgentsLayout } |
 	{ version: 1; action: 'focus'; workspace: string; terminal: string };
 export interface AgentsReceipt {
 	version: 1; ok: boolean; error?: string; presets?: AgentsPreset[];
@@ -73,6 +75,8 @@ export function isAgentsRequest(value: unknown): value is AgentsRequest {
 		(value.action === 'presets' && text(value.workspace)) ||
 		(value.action === 'savePreset' && text(value.workspace) && text(value.name) && value.name.length <= 128 && isAgentsLaunch(value.choices)) ||
 		(value.action === 'launch' && text(value.workspace) && isAgentsLaunch(value.choices) && (value.focused === undefined || text(value.focused))) ||
+		(value.action === 'resize' && text(value.workspace) && isAgentsLayout(value.layout)) ||
+		(value.action === 'background' && text(value.workspace) && text(value.terminal) && (value.focused === undefined || text(value.focused))) ||
 		(value.action === 'switch' && text(value.workspace)) || (value.action === 'focus' && text(value.workspace) && text(value.terminal)));
 }
 

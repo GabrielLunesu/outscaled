@@ -42,4 +42,14 @@ suite('Outscaled - Agents Bridge', () => {
 		const cycle = { type: 'split', direction: 'down', children: [] as object[] }; cycle.children.push(cycle, cycle);
 		strictEqual(isAgentsLayout(cycle), false);
 	});
+	test('grid edits keep version 1 and reject malformed membership or sizes at the boundary', () => {
+		const layout = presetLayout('side-by-side', ['a', 'b']);
+		for (const request of [{ action: 'background', terminal: 'a' }, { action: 'resize', layout }, { action: 'resize', layout: { ...layout, sizes: [2, 1] } }]) {
+			strictEqual(isAgentsRequest({ version: 1, workspace: 'workspace', ...request }), true);
+		}
+		for (const request of [{ action: 'background' }, { action: 'background', terminal: '' }, { action: 'background', terminal: 'a', focused: 1 }, { action: 'resize' }, { action: 'resize', layout: { ...layout, sizes: [0, 1] } }]) {
+			strictEqual(isAgentsRequest({ version: 1, workspace: 'workspace', ...request }), false);
+		}
+	});
+
 });
