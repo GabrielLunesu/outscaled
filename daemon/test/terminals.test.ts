@@ -86,6 +86,28 @@ test("an omitted command opens and stores the login shell", async () => {
   await eventually(async () => Bun.spawnSync(["ps", "-p", String(terminal.pid), "-o", "args="]).stdout.toString().includes("/bin/bash -l"));
 });
 
+test("an idle shell keeps its last command output instead of its prompt", async () => {
+  writeFileSync(join(f.root, ".bash_profile"), 'PS1="TEST_PROMPT> "\n');
+  const terminal = Terminal.parse(await (await open({ name: "shell" })).json());
+  const target = `=${terminal.session}:`;
+  const input = async (body: unknown) => {
+    expect((await fetch(`${base}/demo/terminals/shell/input`, { method: "POST", body: JSON.stringify(body) })).status).toBe(200);
+  };
+  await eventually(async () => (await tmux.captureScreen(target)).includes("TEST_PROMPT> "));
+  expect((await list())[0]!.latestLine).toBeNull();
+  await input({ text: "echo LAST_OUTPUT" });
+  await eventually(async () => (await list())[0]!.latestLine === "LAST_OUTPUT");
+  expect((await tmux.captureScreen(target)).trimEnd().split("\n").at(-1)).toBe("TEST_PROMPT>");
+
+  // Output is sampled while a command is still running, then remains the
+  // command's final output once the prompt returns.
+  await input({ text: "echo RUNNING_OUTPUT; read -r ignored; echo FINISHED_OUTPUT" });
+  await eventually(async () => (await list())[0]!.latestLine === "RUNNING_OUTPUT");
+  await input({ keys: ["Enter"], submit: false });
+  await eventually(async () => (await list())[0]!.latestLine === "FINISHED_OUTPUT");
+  expect((await tmux.captureScreen(target)).trimEnd().split("\n").at(-1)).toBe("TEST_PROMPT>");
+}, 10000);
+
 test("commands resolve PATH from the login shell and preserve quoting", async () => {
   const bin = join(f.root, "bin");
   mkdirSync(bin);

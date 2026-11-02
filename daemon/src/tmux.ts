@@ -69,6 +69,20 @@ export class Tmux {
     return this.run(["capture-pane", "-p", "-J", "-t", pane], undefined, false);
   }
 
+  async captureShellScreen(pane: string): Promise<string> {
+    // Bound physical rows before -J joins wraps. Read the cursor in the same
+    // command queue as the capture, rather than using an earlier pane poll.
+    const output = await this.run([
+      "display-message", "-p", "-t", pane, "#{cursor_y}",
+      ";", "capture-pane", "-p", "-J", "-t", pane, "-S", "0", "-E", "#{e|-:#{cursor_y},1}",
+    ], undefined, false);
+    const end = output.indexOf("\n");
+    const cursorY = Number(output.slice(0, end));
+    if (end < 0 || !Number.isSafeInteger(cursorY) || cursorY < 0) throw new Error("tmux returned an invalid cursor row");
+    // -E -1 means history, not an empty range. Nothing above row zero is visible.
+    return cursorY === 0 ? "" : output.slice(end + 1);
+  }
+
   async captureOutput(pane: string, lines: number): Promise<string> {
     const output = await this.run(["capture-pane", "-p", "-J", "-t", pane, "-S", "-"], undefined, false);
     // Keep leading whitespace and whitespace on nonblank lines intact.

@@ -341,10 +341,9 @@ export class Terminals {
     const needsPrompt = terminal.status === "needs_input" && !terminal.request?.permission;
     const needsLine = !terminal.runtime && !this.state.hasAgentLatestLine(terminal.id);
     if (!needsLine && !needsPrompt) return;
-    const screen = await this.tmux.captureScreen(pane.pane);
-    if (needsLine) this.state.updateLatestLine(terminal.id, latestLine(screen));
+    if (needsLine) this.state.updateLatestLine(terminal.id, latestLine(await this.tmux.captureShellScreen(pane.pane)));
     if (needsPrompt) {
-      const parsed = permissionPrompt(screen);
+      const parsed = permissionPrompt(await this.tmux.captureScreen(pane.pane));
       if (parsed) this.state.updateTerminalStatus(terminal.id, "needs_input", {
         message: terminal.request?.message ?? null, permission: parsed.prompt,
       }, parsed.fingerprint);
