@@ -1,0 +1,36 @@
+
+ ▐▛███▛█   Claude Code v2.1.316
+▝▜██████▀  Test 0.0 with basic effort · Sample xxx
+ ▝▝   ▝▝   <workspace>_______________________
+
+
+❯ Create a file named notes.txt containing the word hi. Do nothing else.
+
+⏺ Write(notes.txt)
+  ⎿  User rejected write to notes.txt
+      1 hi
+
+✻ Churned for 5s · done 4:54 PM
+
+❯ Run the shell command: touch made-by-bash.txt
+
+  Creating empty file made-by-bash.txt
+  ⎿  $ touch made-by-bash.txt
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+ Create empty file made-by-bash.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ touch made-by-bash.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and always allow access to <workspace>_______________________ from this project
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend
+
+
+

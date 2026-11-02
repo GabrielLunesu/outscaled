@@ -505,8 +505,9 @@ ws answer demo agent deny --on example-alias
 
 Omit `--on` to use the local daemon. Only a running Claude Code terminal in
 `needs_input` can be answered. wsd captures its current visible screen (never
-scrollback) and requires a `Do you want …?` question, single-digit numbered options and the
-`Esc to cancel` footer. Allow Once sends only the number labelled exactly `Yes`;
+scrollback) and requires a `Do you want …?` question, single-digit numbered
+options and the `Esc to cancel` footer (optionally followed by ` · ` and further
+hints). Allow Once sends only the number labelled exactly `Yes`;
 Deny sends only the number labelled exactly `No`. A saved fingerprint also
 covers the tool context above the question, so even a different Bash command
 with identical options is rejected. An answer consumes the request and sets

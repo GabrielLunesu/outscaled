@@ -1,13 +1,11 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { createTerminalsRoute } from "../src/routes/terminals";
 import { State } from "../src/state";
 import { Terminals } from "../src/terminals";
 import { Tmux, type TmuxPane } from "../src/tmux";
 import { fixture, terminal, workspace } from "./helpers";
+import { permissionFixture as block } from "./permission-fixtures";
 
-const block = (name: string) => readFileSync(join(import.meta.dir, `fixtures/permissions/${name}.txt`), "utf8");
 let f: ReturnType<typeof fixture>;
 let state: State;
 let terminals: Terminals;
@@ -53,7 +51,7 @@ test("unknown terminal and workspace return 404; malformed answers return 400", 
   expect(keys).toEqual([]);
 });
 
-for (const reason of ["not waiting", "wrong runtime", "exited", "dead pane", "missing pane", "no prompt", "trust", "layout", "changed question", "changed context", "not captured"] as const) {
+for (const reason of ["not waiting", "wrong runtime", "exited", "dead pane", "missing pane", "no prompt", "trust", "after escape", "layout", "changed question", "changed context", "not captured"] as const) {
   test(`409 with no key for ${reason}`, async () => {
     await terminals.captureRequest(terminal.id, "Permission requested");
     if (reason === "not waiting") state.updateTerminalStatus(terminal.id, "idle");
@@ -61,8 +59,9 @@ for (const reason of ["not waiting", "wrong runtime", "exited", "dead pane", "mi
     if (reason === "exited") state.updateTerminalState(terminal.id, { state: "exited", pid: null });
     if (reason === "dead pane") panes[0]!.dead = true;
     if (reason === "missing pane") panes = [];
-    if (reason === "no prompt") screen = "Request finished\n❯";
-    if (reason === "trust") screen = "Do you trust this folder?\n1. Yes\n2. No\nEsc to cancel";
+    if (reason === "no prompt") screen = block("after-no");
+    if (reason === "trust") screen = block("trust");
+    if (reason === "after escape") screen = block("after-esc");
     if (reason === "layout") screen = block("edit").replace("3. No", "3. Never");
     if (reason === "changed question") screen = block("bash");
     if (reason === "changed context") screen = "A different tool call\n" + screen;

@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { StreamMessage, Terminal } from "@outscaled/protocol";
+import { permissionFixture } from "./permission-fixtures";
 import { shellQuote } from "../src/terminals";
 
 // Shared by the source integration test and the private built-binary check.
@@ -27,10 +28,21 @@ export async function attentionScenario(address: string, cli: string[], env: Nod
   const open = async (name: string, command: string) => {
     const response = await post(base, { name, command });
     check(response.status === 201, `Open ${name}: ${await response.clone().text()}`);
-    return Terminal.parse(await response.json());
+    const terminal = Terminal.parse(await response.json());
+    if (terminal.runtime === "claude-code") {
+      const resized = Bun.spawnSync(["tmux", "-S", env.WSD_TMUX_SOCKET!, "resize-window", "-t", `=${terminal.session}:`, "-x", "110", "-y", "40"]);
+      check(resized.exitCode === 0, `Resize failed: ${resized.stderr.toString()}`);
+      writeFileSync(join(folder, `${name}.viewport-ready`), "ready");
+    }
+    return terminal;
+  };
+  const assertFullScreen = async (name: string, fixture: Parameters<typeof permissionFixture>[0]) => {
+    const output = await (await fetch(`${address}${base}/${name}/output?lines=40`)).json() as { text: string };
+    check(output.text.includes(permissionFixture(fixture).trim()), `Full ${fixture} capture was clipped or changed in ${name}`);
+    report(`${name}: full 36-row ${fixture} screen captured intact`);
   };
   const bin = join(folder, "bin"); mkdirSync(bin, { recursive: true });
-  for (const name of ["edit", "bash"]) writeFileSync(join(folder, `${name}.txt`), readFileSync(join(import.meta.dir, `fixtures/permissions/${name}.txt`)));
+  for (const name of ["edit", "bash", "trust", "after-no", "after-esc"] as const) writeFileSync(join(folder, `${name}.txt`), permissionFixture(name));
   writeFileSync(join(bin, "claude"), `#!${process.execPath}
 import { appendFileSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 const args = process.argv.slice(2);
@@ -56,12 +68,13 @@ await hook("SessionStart");
 let previous = "";
 setInterval(async () => {
  const path = name + ".screen";
- if (!existsSync(path)) return;
+ if (!existsSync(path) || !existsSync(name + ".viewport-ready")) return;
  const mode = readFileSync(path,"utf8");
  if (mode === previous) return;
  previous = mode;
  const kind = mode.replace("-changed", "");
- const screen = kind === "trust" ? "Quick safety check: Is this a project you created or one you trust?\\n1. Yes, I trust this folder\\n2. No, exit\\nEnter to confirm" : kind === "none" ? "No permission prompt\\n❯" : readFileSync(kind + ".txt", "utf8");
+ const fixture = kind === "none" ? "after-no" : kind === "escape" ? "after-esc" : kind;
+ const screen = readFileSync(fixture + ".txt", "utf8");
  process.stdout.write("\\x1b[2J\\x1b[H" + screen);
  if (!mode.endsWith("-changed")) await hook("Notification", {notification_type:"permission_prompt",message:"Claude requests permission for " + kind});
  writeFileSync(name+".drawn",mode);
@@ -90,6 +103,7 @@ await Bun.sleep(600000);
       writeFileSync(join(folder, `${name}.screen`), layout);
       await open(name, `${shellQuote(join(bin, "claude"))} ${name}`);
       await eventually(async () => (await row(name))?.status === "needs_input" && Boolean((await row(name))?.request?.permission));
+      await assertFullScreen(name, layout);
       const waiting = await row(name);
       check(waiting.request?.message === `Claude requests permission for ${layout}`, "Missing notification message");
       check(waiting.latestLine === "Claude latest assistant line", "Missing transcript latest line");
@@ -108,11 +122,12 @@ await Bun.sleep(600000);
       await eventually(async () => (await row(name)).status === "idle" && (await row(name)).request === null);
       report(`${name} received key ${expected}; request cleared; latestLine=${(await row(name)).latestLine}`);
     }
-    for (const mode of ["none", "trust", "changed"] as const) {
+    for (const mode of ["none", "trust", "escape", "changed"] as const) {
       const name = `reject-${mode}`;
       writeFileSync(join(folder, `${name}.screen`), mode === "changed" ? "edit" : mode);
       await open(name, `${shellQuote(join(bin, "claude"))} ${name}`);
       await eventually(async () => (await row(name))?.status === "needs_input");
+      await assertFullScreen(name, mode === "changed" ? "edit" : mode === "none" ? "after-no" : mode === "escape" ? "after-esc" : "trust");
       if (mode === "changed") {
         writeFileSync(join(folder, `${name}.screen`), "bash-changed");
         await eventually(async () => await Bun.file(join(folder, `${name}.drawn`)).text().catch(() => "") === "bash-changed");

@@ -44,7 +44,7 @@ export function permissionPrompt(screen: string): { prompt: PermissionPrompt; fi
   const questions = rows.map((row, index) => /^\s*Do you want .+\?$/.test(row) ? index : -1).filter(index => index >= 0);
   if (questions.length !== 1) return null;
   const start = questions[0]!;
-  const end = rows.findIndex((row, index) => index > start && row.trim() === "Esc to cancel");
+  const end = rows.findIndex((row, index) => index > start && /^Esc to cancel(?: · .+)?$/.test(row.trim()));
   if (end < 0 || rows.slice(end + 1).some(row => row.trim())) return null;
   // Claude shortcuts are single keystrokes. Never send a multi-digit number:
   // its first digit could select an entirely different option.

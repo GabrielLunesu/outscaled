@@ -1,5 +1,5 @@
 import { afterEach, expect, jest, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { StreamMessage } from "@outscaled/protocol";
 import { latestLine, permissionPrompt, transcriptLatestLine, TRANSCRIPT_TAIL_BYTES } from "../src/attention";
@@ -7,12 +7,12 @@ import { State } from "../src/state";
 import { Terminals } from "../src/terminals";
 import { Tmux, type TmuxPane } from "../src/tmux";
 import { fixture, terminal, workspace } from "./helpers";
+import { permissionFixture as promptFixture } from "./permission-fixtures";
 
-export const promptFixture = (name: string) => readFileSync(join(import.meta.dir, `fixtures/permissions/${name}.txt`), "utf8");
 afterEach(() => jest.useRealTimers());
 
 for (const [name, no] of [["edit", 3], ["bash", 4]] as const) {
-  test(`real ${name} permission block finds exact Yes and No options`, () => {
+  test(`real ${name} permission screen finds exact Yes and No options`, () => {
     const parsed = permissionPrompt(promptFixture(name))!;
     expect(parsed.prompt.question).toBe(name === "edit" ? "Do you want to create notes.txt?" : "Do you want to proceed?");
     expect(parsed.prompt.options.find(option => option.label === "Yes")?.number).toBe(1);
@@ -25,9 +25,7 @@ for (const [name, no] of [["edit", 3], ["bash", 4]] as const) {
 
 test("rejects folder trust, after-No and after-Escape screens, garbage and unknown layouts", () => {
   for (const text of [
-    "Quick safety check: Is this a project you created or one you trust?\n❯ 1. Yes, I trust this folder\n  2. No, exit\nEnter to confirm · Esc to cancel",
-    "Claude will try another approach.\n❯ \n  ⏸ manual mode on · ? for shortcuts", // after No
-    "Request interrupted\n❯ \n  ⏸ manual mode on · ? for shortcuts", // after Escape
+    promptFixture("trust"), promptFixture("after-no"), promptFixture("after-esc"),
     "", "garbage", "Do you want to proceed?\n1. Yes\n2. No", // incomplete
     promptFixture("edit").replace("1. Yes", "1. Yes, always"),
     promptFixture("edit").replace("3. No", "4. No"),
@@ -38,6 +36,17 @@ test("rejects folder trust, after-No and after-Escape screens, garbage and unkno
     "Do you want to proceed?\n" + Array.from({length: 10}, (_, i) => `${i + 1}. ${i === 0 ? "Yes" : i === 9 ? "No" : "Other option"}`).join("\n") + "\nEsc to cancel",
 
   ]) expect(permissionPrompt(text)).toBeNull();
+});
+
+test("footer accepts standalone cancel or separated hints and rejects lookalikes", () => {
+  const screen = promptFixture("edit");
+  expect(screen).toContain(" Esc to cancel · Tab to amend\n");
+  for (const footer of ["Esc to cancel", "Esc to cancel · Tab to amend", "Esc to cancel · Tab to amend · More hints"]) {
+    expect(permissionPrompt(screen.replace("Esc to cancel · Tab to amend", footer))?.prompt.options.find(option => option.label === "No")?.number).toBe(3);
+  }
+  for (const footer of ["Esc to cancellation", "Esc to cancel arbitrary text", "Esc to cancel ·", "Hint · Esc to cancel", "Esc to cancel · Tab to amend\nNew output"]) {
+    expect(permissionPrompt(screen.replace("Esc to cancel · Tab to amend", footer))).toBeNull();
+  }
 });
 
 test("latest line is trimmed, single-line, bounded, and ignores blank lines and terminal escapes", () => {

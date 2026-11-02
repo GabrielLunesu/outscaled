@@ -14,7 +14,7 @@ test("private tmux agents supply waiting requests, live latest lines and safe an
   try {
     await attentionScenario(`http://127.0.0.1:${app.server.port}`, [process.execPath, join(import.meta.dir, "../src/ws.ts")],
       { ...f.env, WSD_PORT: String(app.server.port) }, folder);
-    expect(app.state.listEvents().filter(event => event.type === "agent.needs_input")).toHaveLength(7);
+    expect(app.state.listEvents().filter(event => event.type === "agent.needs_input")).toHaveLength(8);
   } finally {
     await app.stop();
     Bun.spawnSync(["tmux", "-S", f.env.WSD_TMUX_SOCKET, "kill-server"]);
