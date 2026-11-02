@@ -47,6 +47,16 @@ class AgentsWorkbench extends Disposable implements IAgentsWorkbench {
 		super();
 		this.modes = storage.getObject<Record<string, WorkspaceMode>>(storageKey, StorageScope.WORKSPACE, {});
 		this._register(storage.onWillSaveState(() => { if (!this.transitioning && this.agents.mode === 'code') { this.rememberCode(); } this.save(); }));
+		// Native split commands create an empty group even for singleton inputs.
+		// Agents owns the full editor area; Code keeps the original handlers.
+		for (const [id, command] of CommandsRegistry.getCommands()) {
+			if (id.startsWith('workbench.action.splitEditor') || id === 'workbench.action.toggleSplitEditorInGroup') {
+				this._register(CommandsRegistry.registerCommand(id, (accessor, ...args) => {
+					if (this.agents.mode === 'agents' || this.transitioning) { return; }
+					return command.handler(accessor, ...args);
+				}));
+			}
+		}
 	}
 	private enqueue(action: () => Promise<void>): Promise<void> {
 		const result = this.queue.then(async () => {

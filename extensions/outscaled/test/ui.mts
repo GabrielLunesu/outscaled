@@ -155,6 +155,8 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	};
 	await openPreset('2 Claude + 2 Codex');
 	await until(async () => { const panes = await proof(); return panes.length === 4 && panes.every((pane: any) => pane.text?.includes('AGENTS_VIEW')); }, 'four live xterms', 15000);
+	await command('workbench.action.splitEditor');
+	assert.equal(await win.locator('.part.editor .editor-group-container').count(), 1, 'Agents stays a single editor group');
 	const terminals = await request('workspaces/agents-demo/terminals');
 	const target = terminals.find((terminal: any) => terminal.name === 'claude-1');
 	await request('hooks/claude-code', { terminal: target.id, payload: { hook_event_name: 'Stop' } });
@@ -315,6 +317,8 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	await win.evaluate(() => (window as ProbedWindow).__agentsProbe.openFile('ws://example-alias/vps-demo/README.md'));
 	await win.locator('.monaco-editor .view-line').filter({ hasText: '# Remote workspace' }).waitFor();
 	await capture('12-vps-code');
+	await command('workbench.action.splitEditor');
+	assert.equal(await win.locator('.part.editor .editor-group-container').count(), 2, 'Code retains native editor splitting');
 	await win.locator('.outscaled-title-controls').getByRole('button', { name: 'Agents', exact: true }).click();
 	await until(async () => (await proof())[0]?.text?.includes('PRIVATE_REMOTE_INPUT'), 'VPS return');
 	const ssh = readFileSync(sshLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));

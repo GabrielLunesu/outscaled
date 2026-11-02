@@ -15,7 +15,7 @@ import { IThemeService } from '../../../../platform/theme/common/themeService.js
 import { localize } from '../../../../nls.js';
 import { EditorPaneDescriptor, IEditorPaneRegistry } from '../../../browser/editor.js';
 import { EditorPane } from '../../../browser/parts/editor/editorPane.js';
-import { EditorExtensions, IEditorOpenContext } from '../../../common/editor.js';
+import { EditorExtensions, EditorInputCapabilities, IEditorOpenContext } from '../../../common/editor.js';
 import { EditorInput } from '../../../common/editor/editorInput.js';
 import { IEditorGroup } from '../../../services/editor/common/editorGroupsService.js';
 import { WorkspaceTerminals } from './agentsService.js';
@@ -26,6 +26,7 @@ export class AgentsInput extends EditorInput {
 	readonly resource = undefined;
 	constructor(readonly owner: WorkspaceTerminals) { super(); }
 	override get typeId(): string { return AgentsInput.ID; }
+	override get capabilities(): EditorInputCapabilities { return EditorInputCapabilities.Singleton | EditorInputCapabilities.Readonly | EditorInputCapabilities.ForceReveal; }
 	override getName(): string { return localize('agents.editor', "Agents"); }
 }
 
