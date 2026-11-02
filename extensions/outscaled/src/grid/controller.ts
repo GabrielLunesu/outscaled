@@ -11,7 +11,7 @@ import { WorkspaceSelection } from '../workspaces/selection';
 import { containsUri, WorkspaceLocation } from '../workspaces/uri';
 import { workspaceKey } from '../workspaces/identity';
 import { createTerminal, ensureTerminal, listTerminals } from './daemonTerminals';
-import { GridMemory, gridMemoryKey } from './memory';
+import { applyGridRequest, GridMemory, gridMemoryKey } from './memory';
 import { PresetStore, builtInPresets, expandPreset, presets } from './presets';
 import { attachEnv, findWsPath } from './wsPath';
 import { AgentsLaunch, insertLaunch, launchLayout } from '../../../../src/vs/workbench/contrib/outscaled/common/agentsLaunch.js';
@@ -62,7 +62,15 @@ export class TerminalGrid implements vscode.Disposable {
 							if (value.action === 'savePreset') { await this.enqueue(() => this.presetStore.save(value.workspace, value.name, value.choices)); }
 							return { version: 1, ok: true, presets: [...builtInPresets().map(preset => ({ ...preset, name: vscode.l10n.t(preset.name) })), ...await this.presetStore.load(value.workspace)] };
 						}
-						if (value.action === 'launch') { await this.launch(location, value.choices, value.focused); }
+						if (value.action === 'background' || value.action === 'resize') {
+							await this.enqueue(async () => {
+								const current = this.snapshot().workspaces.find(workspace => workspace.id === value.workspace);
+								if (!current?.selected) { throw new Error(vscode.l10n.t('Select this workspace before changing its grid')); }
+								const focus = applyGridRequest(this.memory, location, current.layout, value, current.terminals.map(terminal => terminal.id));
+								await this.publish(focus ? { workspace: value.workspace, terminal: focus } : undefined);
+							});
+						}
+						else if (value.action === 'launch') { await this.launch(location, value.choices, value.focused); }
 						else if (value.action === 'switch') {await vscode.commands.executeCommand('outscaled.switchWorkspace', location);}
 						else {
 							const terminal = workspace.terminals.find(terminal => terminal.id === value.terminal);

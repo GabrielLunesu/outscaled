@@ -16,7 +16,7 @@ import { spawnSync } from 'node:child_process';
 import { createTerminal, ensureTerminal } from '../src/grid/daemonTerminals';
 import { findWsPath, attachArgs, attachEnv } from '../src/grid/wsPath';
 import { tabStatus } from '../src/grid/status';
-import { GridMemory } from '../src/grid/memory';
+import { applyGridRequest, GridMemory } from '../src/grid/memory';
 import { agentsSnapshot } from '../src/grid/mapping';
 import type { ServerState } from '../src/daemon/state';
 import { isAgentsSnapshot } from '../../../src/vs/workbench/contrib/outscaled/common/agentsBridge.js';
@@ -196,4 +196,32 @@ test('initial discovery of many sessions stays within the bridge depth limit', (
 	const snapshot = agentsSnapshot([server], undefined, new GridMemory(), '/test/ws', {});
 	assert.equal(isAgentsSnapshot(snapshot), true);
 	assert.deepEqual(layoutTerminals(snapshot.workspaces[0].layout), terminals.map(terminal => terminal.id));
+});
+
+
+test('background requests persist membership, select neighbours and keep all daemon identities known', () => {
+	const memory = new GridMemory();
+	const ids = ['a', 'b', 'c'];
+	let tree = presetLayout('2+1', ids);
+	const focus = applyGridRequest(memory, workspace, tree, { version: 1, action: 'background', workspace: 'local/demo', terminal: 'b' }, ids);
+	tree = new GridMemory(memory.serialize()).recall(workspace)!;
+	assert.deepEqual({ ids: layoutTerminals(tree), focus, known: memory.known(workspace) }, { ids: ['a', 'c'], focus: 'c', known: ids });
+	assert.equal(applyGridRequest(memory, workspace, tree, { version: 1, action: 'background', workspace: 'local/demo', terminal: 'c' }, ids), 'a');
+	assert.equal(applyGridRequest(memory, workspace, memory.recall(workspace)!, { version: 1, action: 'background', workspace: 'local/demo', terminal: 'a' }, ids), undefined);
+	const server = { host: 'local', online: true, workspaces: [{ slug: 'demo', path: '/test/demo' }], terminals: ids.map(id => ({ ...terminal, id })) } as ServerState;
+	assert.deepEqual(agentsSnapshot([server], undefined, new GridMemory(memory.serialize()), '/test/ws', {}).workspaces[0].layout, { type: 'pane', terminal: null });
+	assert.throws(() => applyGridRequest(memory, workspace, tree, { version: 1, action: 'background', workspace: 'local/demo', terminal: 'missing' }, ids), /not in the grid/);
+	assert.equal(applyGridRequest(memory, workspace, presetLayout('four-across', ['a', 'b', 'c', 'd']), { version: 1, action: 'background', workspace: 'local/demo', terminal: 'b', focused: 'a' }, ['a', 'b', 'c', 'd']), 'a');
+});
+
+test('resize requests round trip weights and reset to equal; old trees restore and stale trees fail', () => {
+	const memory = new GridMemory();
+	const tree = presetLayout('side-by-side', ['a', 'b']);
+	const resized = { ...tree, sizes: [3, 1] };
+	applyGridRequest(memory, workspace, tree, { version: 1, action: 'resize', workspace: 'local/demo', layout: resized }, ['a', 'b']);
+	assert.deepEqual(new GridMemory(memory.serialize()).recall(workspace), resized);
+	applyGridRequest(memory, workspace, resized, { version: 1, action: 'resize', workspace: 'local/demo', layout: tree }, ['a', 'b']);
+	assert.deepEqual(new GridMemory(memory.serialize()).recall(workspace), tree);
+	assert.throws(() => applyGridRequest(memory, workspace, presetLayout('single', ['a']), { version: 1, action: 'resize', workspace: 'local/demo', layout: resized }, ['a', 'b']), /grid changed/);
+	assert.deepEqual(memory.recall(workspace), tree);
 });

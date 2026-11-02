@@ -23,6 +23,7 @@ interface Probe {
 	agents: IAgentsService; terminals: ITerminalService; commands: ICommandService;
 	originals: ITerminalInstance[]; xterms: ITerminalInstance['xterm'][];
 	openFile(resource: string): Promise<void>;
+	selectionCount(): number;
 }
 type ProbedWindow = Window & { __agentsProbe: Probe };
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -118,7 +119,7 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	await request('workspaces', { slug: 'agents-demo', path: folder });
 	await request('workspaces', { slug: 'second-demo', path: second });
 	writeFileSync(join(profile, 'User/settings.json'), JSON.stringify({ 'window.title': 'Outscaled agents acceptance',
-		'window.confirmSaveUntitledWorkspace': false, 'files.simpleDialog.enable': true,
+		'window.confirmSaveUntitledWorkspace': false, 'window.menuStyle': 'custom', 'files.simpleDialog.enable': true,
 		'outscaled.wsPath': join(root, 'daemon/dist/ws'), 'editor.accessibilitySupport': 'on' }));
 	app = await _electron.launch({ executablePath: join(root, '.build/electron', `${product.nameLong}.app`, 'Contents/MacOS', product.nameShort),
 		args: [root, folder, '--user-data-dir', profile, '--shared-data-dir', join(temporary, 'shared'), '--extensions-dir', join(temporary, 'ext'),
@@ -148,11 +149,13 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 			const { IAgentsService } = await import(base + 'vs/workbench/contrib/outscaled/browser/agentsService.js');
 			const { ITerminalService } = await import(base + 'vs/workbench/contrib/terminal/browser/terminal.js');
 			const { IEditorService } = await import(base + 'vs/workbench/services/editor/common/editorService.js');
+			const { ICodeEditorService } = await import(base + 'vs/editor/browser/services/codeEditorService.js');
 			const { URI } = await import(base + 'vs/base/common/uri.js');
 			const { ICommandService } = await import(base + 'vs/platform/commands/common/commands.js');
 			CommandsRegistry.registerCommand('outscaled.agentsProbe', (accessor: ServicesAccessor) => {
 				const editors = accessor.get(IEditorService);
-				(window as ProbedWindow).__agentsProbe = { agents: accessor.get(IAgentsService), terminals: accessor.get(ITerminalService), commands: accessor.get(ICommandService), originals: [], xterms: [], openFile: async resource => { await editors.openEditor({ resource: URI.parse(resource), options: { pinned: true } }); } };
+				const codeEditors = accessor.get(ICodeEditorService);
+				(window as ProbedWindow).__agentsProbe = { agents: accessor.get(IAgentsService), terminals: accessor.get(ITerminalService), commands: accessor.get(ICommandService), originals: [], xterms: [], selectionCount: () => codeEditors.getFocusedCodeEditor()?.getSelections()?.length ?? 0, openFile: async resource => { await editors.openEditor({ resource: URI.parse(resource), options: { pinned: true } }); } };
 			});
 			MenuRegistry.appendMenuItem(MenuId.CommandPalette, { command: { id: 'outscaled.agentsProbe', title: 'Outscaled Agents Probe' } });
 		}, pathToFileURL(join(root, 'out/')).href.replace('file://', 'vscode-file://vscode-app'));
@@ -171,6 +174,8 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 		await command('outscaled.switchWorkspace', { host, slug });
 		await until(async () => await win.locator('.outscaled-workspace-name').innerText() === slug, `switch to ${slug}`);
 	};
+	// Await the initial root transition as well as its early title update.
+	await switchWorkspace('agents-demo');
 	await openPreset('2 Claude + 2 Codex');
 	await until(async () => { const panes = await proof(); return panes.length === 4 && panes.every((pane: any) => pane.text?.includes('AGENTS_VIEW')); }, 'four live xterms', 15000);
 	await command('workbench.action.splitEditor');
@@ -429,6 +434,152 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	await capture('new-08-grid-after-reload');
 	assert.equal(await row('agents-demo').locator('.outscaled-workspace-dot').count(), (await request('workspaces/agents-demo/terminals')).length);
 
+	// Phase 4 item 3: pane menus, scoped shortcuts, background membership and nested sashes.
+	const focusedId = () => win.evaluate(() => document.activeElement?.closest('.outscaled-agent-pane')?.getAttribute('data-terminal-id'));
+	const paneById = (id: string) => win.locator(`.outscaled-agent-pane[data-terminal-id="${id}"]`);
+	const paneFocus = async (id: string) => { await paneById(id).locator('.xterm-helper-textarea').focus(); };
+	const daemonBeforeActions = await request('workspaces/agents-demo/terminals');
+	await paneFocus(alwaysId);
+	await win.keyboard.press('F1'); await win.locator('.quick-input-widget input').fill('>Add Claude to the Right');
+	await win.locator('.quick-input-list .monaco-list-row').filter({ hasText: 'Add Claude to the Right' }).waitFor();
+	await capture('pane-00-command-palette'); await win.keyboard.press('Escape');
+	await paneFocus(alwaysId);
+	await win.keyboard.press('Meta+d');
+	await until(async () => (await proof()).length === 2 && await focusedId() !== alwaysId, 'Cmd+D adds and focuses Claude');
+	const claudeId = (await focusedId())!;
+	const afterClaude = await proof();
+	assert.ok(afterClaude[1].x > afterClaude[0].x && afterClaude[1].y === afterClaude[0].y);
+	assert.equal(await paneById(claudeId).locator('.outscaled-runtime-badge').innerText(), 'Claude');
+	await capture('pane-01-shortcut-claude-right');
+	await win.keyboard.press('Shift+Alt+Meta+d');
+	await until(async () => (await proof()).length === 3 && await focusedId() !== claudeId, 'Shift+Alt+Cmd+D adds and focuses Codex below');
+	const codexId = (await focusedId())!;
+	const afterCodex = await proof();
+	assert.ok(afterCodex[2].y > afterCodex[1].y && afterCodex[2].x === afterCodex[1].x);
+	assert.equal(await paneById(codexId).locator('.outscaled-runtime-badge').innerText(), 'Codex');
+	const daemonAfterShortcuts = await request('workspaces/agents-demo/terminals');
+	assert.equal(daemonAfterShortcuts.length, daemonBeforeActions.length + 2);
+	assert.ok([claudeId, codexId].every(id => !daemonBeforeActions.some(terminal => terminal.id === id)));
+	await capture('pane-02-shortcut-codex-below');
+	const menuLabels = ['Add Claude to the Right', 'Add Codex to the Right', 'Add Shell to the Right', 'Add Claude Below', 'Add Codex Below', 'Add Shell Below', 'Move to Background'];
+	await paneById(codexId).getByRole('button', { name: 'Pane Actions', exact: true }).click();
+	for (const label of menuLabels) { await win.getByRole('menuitem', { name: label, exact: false }).waitFor(); }
+	await capture('pane-03-open-menu');
+	await win.getByRole('menuitem', { name: 'Add Shell to the Right', exact: true }).click();
+	await until(async () => (await proof()).length === 4 && await focusedId() !== codexId, 'header menu adds and focuses a shell');
+	const shellId = (await focusedId())!;
+	assert.equal(await paneById(shellId).locator('.outscaled-runtime-badge').innerText(), 'Shell');
+	await capture('pane-04-menu-shell-right');
+	await win.keyboard.press('Meta+m');
+	await until(async () => (await proof()).length === 3 && await focusedId() === codexId, 'Cmd+M removes pane and focuses nearest neighbour');
+	const shellSession = (await request('workspaces/agents-demo/terminals')).find(terminal => terminal.id === shellId);
+	assert.equal(spawnSync('tmux', ['-S', socket, 'has-session', '-t', '=' + shellSession.session]).status, 0);
+	const closedGap = await proof();
+	assert.ok(Math.abs(closedGap[1].width - closedGap[2].width) < 2);
+	await capture('pane-05-background-closes-gap');
+	// All these trees use the pre-resize format: no sizes at any split level.
+	assert.equal(await win.evaluate(() => JSON.stringify((window as ProbedWindow).__agentsProbe.agents.snapshot.workspaces.find(workspace => workspace.selected)!.layout).includes('sizes')), false);
+	const reloadAgents = async () => {
+		await command('workbench.action.reloadWindow').catch(() => {});
+		await win.waitForFunction(() => !(window as ProbedWindow).__agentsProbe);
+		await until(async () => (await proof()).length === 3, 'three panes restored after reload', 60000);
+		await installProbe();
+	};
+	await reloadAgents();
+	assert.deepEqual((await proof()).map(pane => pane.id), [alwaysId, claudeId, codexId]);
+	assert.equal(spawnSync('tmux', ['-S', socket, 'has-session', '-t', '=' + shellSession.session]).status, 0);
+	await capture('pane-06-old-layout-and-background-reloaded');
+	const dimensions = () => win.evaluate(() => {
+		const probe = (window as ProbedWindow).__agentsProbe;
+		const workspace = probe.agents.snapshot.workspaces.find(workspace => workspace.selected)!;
+		return [...probe.agents.owners.get(workspace.id)!.panes].map(([id, pane]) => ({ id, cols: pane.instance.cols, rows: pane.instance.rows }));
+	});
+	const dragSash = async (selector: string, dx: number, dy: number, name: string) => {
+		const sash = win.locator(selector).first();
+		const box = (await sash.boundingBox())!;
+		const x = box.x + box.width / 2, y = box.y + box.height / 2;
+		await win.mouse.move(x, y); await win.mouse.down();
+		await win.mouse.move(x + dx, y + dy, { steps: 12 });
+		await capture(name); await win.mouse.up();
+	};
+	const rootSash = '.outscaled-agents-grid > .outscaled-agents-split > .monaco-sash.vertical';
+	const nestedSash = '.outscaled-agents-grid .monaco-sash.horizontal';
+	const beforeResize = await dimensions();
+	await dragSash(rootSash, 100, 0, 'pane-07-mid-resize-right');
+	await until(async () => (await dimensions()).find(pane => pane.id === alwaysId)!.cols !== beforeResize.find(pane => pane.id === alwaysId)!.cols, 'terminal columns follow horizontal resize');
+	await dragSash(nestedSash, 0, 60, 'pane-08-mid-resize-below');
+	await until(async () => (await dimensions()).find(pane => pane.id === claudeId)!.rows !== beforeResize.find(pane => pane.id === claudeId)!.rows, 'terminal rows follow vertical resize');
+	await until(async () => await win.evaluate(() => {
+		const layout = (window as ProbedWindow).__agentsProbe.agents.snapshot.workspaces.find(workspace => workspace.selected)!.layout;
+		return layout.type === 'split' && !!layout.sizes && layout.children[1].type === 'split' && !!layout.children[1].sizes;
+	}), 'both split weights persisted');
+	const resized = await proof();
+	await capture('pane-09-resized');
+	await reloadAgents();
+	const reloadedSizes = await proof();
+	assert.ok(reloadedSizes.every((pane, index) => Math.abs(pane.width - resized[index].width) < 3 && Math.abs(pane.height - resized[index].height) < 3));
+	await capture('pane-10-resized-reloaded');
+	await win.locator(rootSash).dblclick();
+	await win.locator(nestedSash).first().dblclick();
+	await until(async () => {
+		const boxes = await proof();
+		return Math.abs(boxes[0].width - boxes[1].width) < 2 && Math.abs(boxes[1].height - boxes[2].height) < 2;
+	}, 'double-click equalizes both levels');
+	await capture('pane-11-even-splits');
+	// Mouse actions target the clicked pane, independently of the previous active pane.
+	await paneFocus(codexId);
+	await paneById(alwaysId).getByRole('button', { name: 'Pane Actions', exact: true }).click();
+	await win.getByRole('menuitem', { name: 'Add Claude to the Right', exact: false }).click();
+	await until(async () => (await proof()).length === 4 && ![alwaysId, claudeId, codexId].includes((await focusedId())!), 'mouse adds Claude right of the chosen pane');
+	const mouseClaude = (await focusedId())!;
+	await capture('pane-12-menu-claude-right');
+	await paneById(mouseClaude).getByRole('button', { name: 'Pane Actions', exact: true }).click();
+	await win.getByRole('menuitem', { name: 'Add Codex Below', exact: false }).click();
+	await until(async () => (await proof()).length === 5 && await focusedId() !== mouseClaude, 'mouse adds Codex below');
+	await capture('pane-13-menu-codex-below');
+	// The terminal context menu contributes the same native submenu.
+	await paneById(mouseClaude).locator('.outscaled-agent-header').click({ button: 'right' });
+	await win.getByRole('menuitem', { name: 'Pane Actions', exact: false }).waitFor();
+	await capture('pane-14-terminal-context-menu'); await win.keyboard.press('Escape');
+	for (const [binding, runtime] of [['Alt+Meta+d', 'Codex'], ['Shift+Meta+d', 'Claude']] as const) {
+		const before = await proof();
+		await paneFocus(codexId); await win.keyboard.press(binding);
+		await until(async () => (await proof()).length === before.length + 1 && await focusedId() !== codexId, binding);
+		assert.equal(await paneById((await focusedId())!).locator('.outscaled-runtime-badge').innerText(), runtime);
+		await capture('pane-shortcut-' + runtime.toLowerCase());
+	}
+
+	// Editors retain their native Cmd+D binding and never create a daemon terminal.
+	const beforeEditor = await request('workspaces/agents-demo/terminals');
+	writeFileSync(join(folder, 'matches.txt'), 'match match match\n');
+	await command('outscaled.agents.mode', 'code');
+	await win.evaluate(resource => (window as ProbedWindow).__agentsProbe.openFile(resource), pathToFileURL(join(folder, 'matches.txt')).href);
+	await command('cursorTop'); await win.keyboard.press('Meta+d'); await win.keyboard.press('Meta+d');
+	assert.equal(await win.evaluate(() => (window as ProbedWindow).__agentsProbe.selectionCount()), 2);
+	assert.deepEqual((await request('workspaces/agents-demo/terminals')).map(terminal => terminal.id), beforeEditor.map(terminal => terminal.id));
+	await capture('pane-15-code-native-cmd-d');
+	await command('outscaled.agents.mode', 'agents');
+	// Moving every remaining pane out reaches the empty-grid state, preserving tmux.
+	while ((await proof()).length) {
+		const id = (await proof())[0].id!;
+		await paneFocus(id);
+		if (id === alwaysId) {
+			await paneById(id).getByRole('button', { name: 'Pane Actions', exact: true }).click();
+			await win.getByRole('menuitem', { name: 'Move to Background', exact: false }).click();
+		} else { await win.keyboard.press('Meta+m'); }
+		await until(async () => !(await proof()).some(pane => pane.id === id), 'background next pane');
+		await capture('pane-background-remaining-' + (await proof()).length);
+	}
+	await win.getByText('Choose New agents to open a terminal grid.', { exact: true }).waitFor();
+	await capture('pane-16-empty-grid');
+	for (const terminal of beforeEditor) { assert.equal(spawnSync('tmux', ['-S', socket, 'has-session', '-t', '=' + terminal.session]).status, 0); }
+	await command('workbench.action.reloadWindow').catch(() => {});
+	await win.waitForFunction(() => !(window as ProbedWindow).__agentsProbe);
+	await win.getByText('Choose New agents to open a terminal grid.', { exact: true }).waitFor();
+	await installProbe();
+	assert.equal((await proof()).length, 0);
+	await capture('pane-17-empty-reloaded');
+
 	// Exercise the retained VPS transport through a private SSH double. Both endpoints
 	// use this fixture daemon; no connection is made to port 7770 or a real host.
 	await request('hooks/claude-code', { terminal: target.id, payload: { hook_event_name: 'Stop' } });
@@ -473,7 +624,7 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	assert.equal(ssh.filter(entry => entry.kind === 'attach').length, 2);
 	writeFileSync(join(evidence, 'proof.json'), JSON.stringify({ initial, working, needsInput, before, after, terminals, secondTerminals, geometries, remote, ssh, errors }, null, 2));
 	assert.deepEqual(errors, []);
-	console.log('PASS: core sidebar, live badges, dot/row focus, keyboard navigation, Agents/Code shortcuts, native commands, identity, tmux history, workspace/reload persistence, needs-you focus, six split geometries, New agents modal and keyboard focus, typed commands, fresh launches, non-destructive replacement/reload, right/add insertion, literal prompts, run modes and private presets');
+	console.log('PASS: core sidebar, live badges, dot/row focus, keyboard navigation, Agents/Code shortcuts, native commands, identity, tmux history, workspace/reload persistence, needs-you focus, six split geometries, New agents modal and keyboard focus, typed commands, fresh launches, non-destructive replacement/reload, right/add insertion, literal prompts, run modes, private presets, pane actions and scoped shortcuts, persistent background membership and empty grids, nested sash resizing/reload/reset and old layout migration');
 } finally {
 	writeFileSync(join(evidence, 'page-errors.json'), JSON.stringify(errors, null, 2));
 	writeFileSync(join(evidence, 'renderer-errors.json'), JSON.stringify(rendererErrors, null, 2));
