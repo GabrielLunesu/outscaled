@@ -1,4 +1,5 @@
 import { ClaudeCodeHookRequest, CodexHookRequest, type ClaudeCodeHookPayload, type TerminalStatus } from "@outscaled/protocol";
+import type { Schedules } from "../schedules";
 import type { RouteContext } from "../context";
 import { apiError, validateBody } from "../http";
 
@@ -12,7 +13,7 @@ export function claudeStatus(payload: ClaudeCodeHookPayload): TerminalStatus | n
   }
 }
 
-export function createHooksRoute({ state, terminals }: RouteContext) {
+export function createHooksRoute({ state, terminals }: RouteContext, schedules?: Schedules) {
   return async (request: Request, peerAddress?: string): Promise<Response | undefined> => {
     const match = /^\/v1\/hooks\/([^/]+)$/.exec(new URL(request.url).pathname);
     if (!match || request.method !== "POST") return;
@@ -32,10 +33,16 @@ export function createHooksRoute({ state, terminals }: RouteContext) {
       if (terminal.runtime !== runtime) return apiError(409, "runtime_mismatch", "Terminal runtime does not match hook runtime");
       if (terminal.state !== "running") return new Response(null, { status: 204 });
       if (runtime === "codex") {
-        if (body.payload.type === "agent-turn-complete") terminals.codexTurnComplete(terminal.id);
+        if (body.payload.type === "agent-turn-complete") {
+          terminals.codexTurnComplete(terminal.id);
+          await schedules?.terminalIdle(terminal.id);
+        }
       } else {
         const status = claudeStatus(ClaudeCodeHookRequest.parse(body).payload);
-        if (status) state.updateTerminalStatus(terminal.id, status);
+        if (status && !(body.payload.hook_event_name === "SessionStart" && schedules?.runningTerminal(terminal.id))) {
+          state.updateTerminalStatus(terminal.id, status);
+        }
+        if (body.payload.hook_event_name === "Stop") await schedules?.terminalIdle(terminal.id);
       }
       return new Response(null, { status: 204 });
     });

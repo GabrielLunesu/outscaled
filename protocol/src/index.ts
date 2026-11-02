@@ -171,10 +171,23 @@ export const ScheduledAgent = z.discriminatedUnion("runtime", [
 ]);
 export type ScheduledAgent = z.infer<typeof ScheduledAgent>;
 
+export const SchedulePrompt = z.string().min(1).refine(value => !value.includes("\0"), "Prompt must not contain NUL bytes");
+export const CreateScheduleRequest = z.strictObject({
+  name: Slug, runtime: TerminalRuntime, every: ScheduleInterval, prompt: SchedulePrompt,
+});
+export type CreateScheduleRequest = z.infer<typeof CreateScheduleRequest>;
+export const UpdateScheduleRequest = z.strictObject({
+  every: ScheduleInterval.optional(), prompt: SchedulePrompt.optional(),
+}).refine(value => value.every !== undefined || value.prompt !== undefined, "Provide every or prompt");
+export type UpdateScheduleRequest = z.infer<typeof UpdateScheduleRequest>;
+const AppScheduledAgent = CreateScheduleRequest.extend({ mode: z.literal("scheduled") });
+
 export const Schedule = z.object({
   workspace: Slug,
   agent: Slug,
-  config: ScheduledAgent,
+  config: z.union([ScheduledAgent, AppScheduledAgent]),
+  source: z.enum(["workspace", "app"]).default("workspace"),
+  paused: z.boolean().default(false),
   firstSeenAt: timestamp,
   lastStartedAt: timestamp.nullable(),
   nextDueAt: timestamp,
@@ -192,3 +205,22 @@ export const Run = z.object({
   status: z.enum(["running", "succeeded", "failed", "interrupted"]),
 });
 export type Run = z.infer<typeof Run>;
+
+// Public schedule view: workspace prompt files are resolved to their text.
+export const ScheduleSummary = z.object({
+  workspace: Slug,
+  name: Slug,
+  source: z.enum(["workspace", "app"]),
+  readOnly: z.boolean(),
+  runtime: z.enum(["claude-code", "codex", "script"]),
+  every: ScheduleInterval,
+  prompt: z.string().nullable(),
+  command: z.string().nullable(),
+  paused: z.boolean(),
+  lastRun: z.object({
+    id: z.string(), startedAt: timestamp, endedAt: timestamp.nullable(),
+    status: Run.shape.status, result: z.string(),
+  }).nullable(),
+  nextRunAt: timestamp.nullable(),
+});
+export type ScheduleSummary = z.infer<typeof ScheduleSummary>;

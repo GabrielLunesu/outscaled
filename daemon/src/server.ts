@@ -5,6 +5,7 @@ import { createHealthRoute } from "./routes/health";
 import { createHooksRoute } from "./routes/hooks";
 import { createTerminalsRoute } from "./routes/terminals";
 import { createWorkspacesRoute } from "./routes/workspaces";
+import { createSchedulesRoute } from "./routes/schedules";
 import { createRunsRoute } from "./routes/runs";
 import { createFsRoute } from "./routes/fs";
 import { Schedules, type SchedulesOptions } from "./schedules";
@@ -24,9 +25,9 @@ export async function startServer(config: Config, supervisorOptions?: Supervisor
     await terminals.reconcile();
     const supervisor = new Supervisor(state, tmux, terminals, supervisorOptions);
     const context: RouteContext = { config, state, terminals };
-    const schedules = new Schedules(state, config.stateDir, schedulesOptions);
+    const schedules = new Schedules(state, config.stateDir, schedulesOptions, { terminals, tmux });
     const health = createHealthRoute(context);
-    const routes = [health, createWorkspacesRoute(context), createTerminalsRoute(context), createHooksRoute(context), createRunsRoute(context), createFsRoute(context)];
+    const routes = [health, createWorkspacesRoute(context), createTerminalsRoute(context), createHooksRoute(context, schedules), createSchedulesRoute(context, schedules), createRunsRoute(context), createFsRoute(context)];
     const server = Bun.serve({
       hostname: "127.0.0.1",
       port: config.port,

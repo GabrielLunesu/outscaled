@@ -156,22 +156,32 @@ export class State {
   }
 
   listSchedules(workspace: string): Schedule[] {
-    return this.db.query<Omit<Schedule, "config"> & { config: string }, [string]>(
+    return this.db.query<Omit<Schedule, "config" | "paused"> & { config: string; paused: number }, [string]>(
       "SELECT * FROM schedules WHERE workspace = ? ORDER BY agent",
-    ).all(workspace).map(row => ({ ...row, config: JSON.parse(row.config) }));
+    ).all(workspace).map(row => ({ ...row, config: JSON.parse(row.config), paused: Boolean(row.paused) }));
   }
 
   saveSchedule(value: Schedule): Schedule {
     const s = Schedule.parse(value);
-    this.db.query(`INSERT INTO schedules (workspace, agent, config, firstSeenAt, lastStartedAt, nextDueAt)
-      VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(workspace, agent) DO UPDATE SET
-      config = excluded.config, lastStartedAt = excluded.lastStartedAt, nextDueAt = excluded.nextDueAt`)
-      .run(s.workspace, s.agent, JSON.stringify(s.config), s.firstSeenAt, s.lastStartedAt, s.nextDueAt);
+    this.db.query(`INSERT INTO schedules (workspace, agent, config, firstSeenAt, lastStartedAt, nextDueAt, source, paused)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(workspace, agent) DO UPDATE SET
+      config = excluded.config, lastStartedAt = excluded.lastStartedAt, nextDueAt = excluded.nextDueAt, source = excluded.source, paused = excluded.paused`)
+      .run(s.workspace, s.agent, JSON.stringify(s.config), s.firstSeenAt, s.lastStartedAt, s.nextDueAt, s.source, Number(s.paused));
     return s;
   }
 
   deleteSchedule(workspace: string, agent: string): void {
     this.db.query("DELETE FROM schedules WHERE workspace = ? AND agent = ?").run(workspace, agent);
+  }
+
+  ownsScheduledTerminal(workspace: string, agent: string, terminal: string): boolean {
+    return this.db.query("SELECT 1 FROM scheduled_terminals WHERE workspace = ? AND agent = ? AND terminal = ?")
+      .get(workspace, agent, terminal) !== null;
+  }
+
+  ownScheduledTerminal(workspace: string, agent: string, terminal: string): void {
+    this.db.query(`INSERT INTO scheduled_terminals VALUES (?, ?, ?) ON CONFLICT(workspace, agent)
+      DO UPDATE SET terminal = excluded.terminal`).run(workspace, agent, terminal);
   }
 
   getRun(id: string): Run | null {
