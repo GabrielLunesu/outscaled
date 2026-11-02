@@ -71,7 +71,8 @@ sorted by workspace and name, with the same session freshness as `ws term ls`.
 Claude commands (including an absolute path to `claude`) launch with a wsd-owned
 `claude-settings.json` in the state directory. Its hooks call the CLI by absolute
 path and report `idle` at session start and turn end, `working` on prompts and
-tool use, and `needs_input` on permission requests. Idle reminders are ignored.
+tool use, and `needs_input` on permission requests. PostToolUse matches
+`Write|Edit|MultiEdit|NotebookEdit` and also records edited paths. Idle reminders are ignored.
 The stored command remains the original command; workspace and user Claude
 settings are never edited.
 
@@ -132,10 +133,11 @@ Each text frame contains one JSON object validated by the protocol package's
 | --- | --- |
 | `terminal.status`, `agent.needs_input`, `agent.crashed`, `run.started`, `run.finished` | The stored `Event` object, including `id`, `workspace`, `terminal`, `payload`, `time` and `acked`; sent after persistence commits |
 | `workspace.changed` | `{type: "workspace.changed", workspace: "demo"}` when a workspace is created, a terminal opens, or a terminal's process state changes (including shell exits and agent restarts) |
+| `workspace.changes` | `{type: "workspace.changes", workspace: "demo"}` after a recorded Claude edit or a Codex turn end; refetch the workspace changes route; at most once per workspace per second, with a trailing update for bursts |
 | `terminal.latest_line` | `{type: "terminal.latest_line", workspace, terminal, payload: {latestLine}}`, at most once per terminal per second |
 | `server.health` | `{type: "server.health", payload: <Health>}` every 15 seconds, using the same body as `GET /v1/health` |
 
-The last three types are live-only and never enter the events table. On
+The last four types are live-only and never enter the events table. On
 `workspace.changed`, refetch that workspace's terminals (and the workspace list
 if the slug is new). Connect the socket before fetching current state over HTTP,
 and reconcile notifications received during that fetch. Repeat this on reconnect:
@@ -447,6 +449,66 @@ The protocol package exports `FsStat`, `FsEntry`, `FsList`, `FsOperation` and
 `FsWriteOptions`. This API writes only at the client's explicit request. wsd's
 own configuration and logs still stay outside workspace folders; delete, rename,
 mkdir and watch are not implemented.
+
+## Changed files and agent attribution
+
+`GET /v1/workspaces/:ws/changes` returns `WorkspaceChanges`:
+
+```json
+{
+  "attributionAvailable": true,
+  "files": [{
+    "path": "src/example.ts",
+    "originalPath": null,
+    "status": "modified",
+    "agents": [{
+      "terminal": "claude-1",
+      "runtime": "claude-code",
+      "time": "2026-01-01T00:00:00.000Z",
+      "inferred": false
+    }]
+  }]
+}
+```
+
+Paths are relative to the workspace, including when it is a subfolder of a git
+repository. `originalPath` is the old name for a git-detected rename, otherwise
+null. Status is `modified`, `added`, `deleted`, `renamed` or `untracked`. Conflicts
+are represented as modified unless their git status includes an addition or
+deletion; git copies are additions. Untracked directories are expanded into files.
+Files and each file's agents are newest first; files without attribution sort
+last by path. An empty agents list means no agent edit was observed. The latest
+record per terminal name and runtime is retained for each dirty path, preserving
+all agents that touched it. Earlier attribution follows git-detected renames.
+Unknown workspaces return 404 and invalid slugs return 400.
+
+Claude's launch-only PostToolUse hook records `tool_input.file_path` for Write,
+Edit and MultiEdit, and `tool_input.notebook_path` for NotebookEdit. Relative
+paths resolve against the workspace folder; paths and symlink targets outside
+it are ignored. Only paths currently dirty in git receive attribution.
+
+Codex attribution is inferred: wsd snapshots git's changed paths on the transition
+to working, then compares content hashes when turn-complete notify arrives.
+API submissions snapshot before sending input, scheduled runs before launching,
+and attached sessions when sustained output first sets working. Edits before
+that output detection can be missed. Concurrent agents' edits can be attributed
+to Codex too. A daemon restart discards in-flight snapshots, so a turn with no
+observed start receives no inferred records. Stored attribution survives restarts.
+
+Each snapshot retains at most 1,000 changed paths, logging when that cap is hit.
+Files larger than 1 MiB use path, size and mtime instead of content hashes;
+symlinks use their link text without following their target. When the baseline is capped, paths absent from it are treated as unknown rather
+than newly dirty, so they receive no inferred attribution. This prevents false
+new-file attribution when the cap changes membership. Git calls time out after five seconds.
+
+Records live only in wsd's SQLite state. Each changes fetch, edit hook or snapshot
+prunes records for paths no longer dirty (after commit or revert). Folders outside
+a git repository return `{attributionAvailable: false, files: []}`. Git failures
+return an API error instead of pruning saved records. This route does not commit,
+watch or modify workspace files. `workspace.changes` is a live-only refetch hint;
+connect before fetching and refetch on reconnect as with the other stream messages.
+The protocol exports `ChangeAttribution`, `ChangedFile`, `WorkspaceChanges` and
+`WorkspaceChangesEvent` alongside `StreamMessage`.
 
 ## Configuration
 

@@ -91,7 +91,7 @@ function observe(panes: TmuxPane[], status: TerminalStatus = "starting") {
       await terminals.serial(async () => {});
       expect(polls).toBe(previous + 1);
     },
-    notify(time: number) { jest.setSystemTime(time); terminals.codexTurnComplete("codex-0"); },
+    notify(time: number) { jest.setSystemTime(time); return terminals.codexTurnComplete("codex-0"); },
     reconcile() { return terminals.reconcile(); },
     submit() { return terminals.input("demo", "x1", { keys: ["Enter"], submit: false }); },
     status(index = 0) { return state.getTerminal(`codex-${index}`)!.status; },
@@ -219,7 +219,7 @@ for (const generation of [0, null]) {
     const source = { ...pane(), outputGeneration: generation };
     const watch = observe([source], "idle");
     await watch.sample(10_900);
-    watch.notify(11_000);
+    await watch.notify(11_000);
     await watch.sample(11_500); // Quiet inside the minimum grace cannot release settling.
     for (let time = 12_000; time <= 32_000; time += 500) {
       emit(source, time);
@@ -252,9 +252,9 @@ for (const generation of [0, null]) {
     const source = { ...pane(), outputGeneration: generation };
     const watch = observe([source], "idle");
     await watch.sample(10_900);
-    watch.notify(11_000);
+    await watch.notify(11_000);
     await watch.sample(12_100); // Quiet after grace releases the first notification.
-    watch.notify(12_200); // Already idle: statusChangedAt is unchanged.
+    await watch.notify(12_200); // Already idle: statusChangedAt is unchanged.
     for (let time = 12_700; time <= 17_200; time += 500) {
       emit(source, time);
       await watch.sample(time);
@@ -269,7 +269,7 @@ for (const generation of [0, null]) {
     const source = { ...pane(), outputGeneration: generation };
     const watch = observe([source], "idle");
     await watch.sample(10_900);
-    watch.notify(11_000);
+    await watch.notify(11_000);
     source.pid++;
     state.updateTerminalStatus("codex-0", "starting");
     await watch.sample(11_500);
@@ -328,7 +328,7 @@ for (const generation of [0, null]) {
       emit(source, time);
       await watch.sample(time);
     }
-    watch.notify(11_990);
+    await watch.notify(11_990);
     for (const time of [12_100, 12_600, 13_100, 13_600]) {
       emit(source, time);
       await watch.sample(time);
@@ -340,7 +340,7 @@ for (const generation of [0, null]) {
     await watch.sample(16_600);
     await watch.sample(17_100);
     expect(watch.status()).toBe("idle");
-    watch.notify(17_990); // Duplicate idle notify also renews grace.
+    await watch.notify(17_990); // Duplicate idle notify also renews grace.
     emit(source, 18_100);
     await watch.sample(18_100);
     await watch.sample(19_100);
