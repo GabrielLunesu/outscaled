@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { Event, LatestLine, Run, Schedule, Terminal, TerminalStatus, TerminalRequest, Workspace, type StreamMessage } from "@outscaled/protocol";
+import { Event, LatestLine, Run, Schedule, Terminal, TerminalStatus, TerminalRequest, Workspace, type ChangeAttribution, type StreamMessage } from "@outscaled/protocol";
 import { migrate } from "./migrations";
 
 type WorkspaceRow = Omit<Workspace, "inPlace"> & { inPlace: number };
@@ -16,6 +16,8 @@ export class State {
   readonly db: Database;
   private closed = false;
   private readonly latestNotifications = new Map<string, { at: number; line: string | null; timer?: ReturnType<typeof setTimeout> }>();
+
+  private readonly changesNotifications = new Map<string, { at: number; timer?: ReturnType<typeof setTimeout> }>();
 
   constructor(path: string, private readonly publish?: (message: StreamMessage) => void) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
@@ -33,6 +35,7 @@ export class State {
   close(): void {
     this.closed = true;
     for (const pending of this.latestNotifications.values()) clearTimeout(pending.timer);
+    for (const pending of this.changesNotifications.values()) clearTimeout(pending.timer);
     this.db.close();
   }
 
@@ -63,6 +66,55 @@ export class State {
     };
     if (!previous || Date.now() - previous.at >= 1000) emit();
     else if (!previous.timer) previous.timer = setTimeout(emit, 1000 - (Date.now() - previous.at));
+  }
+
+  notifyChanges(workspace: string): void {
+    const previous = this.changesNotifications.get(workspace);
+    const emit = () => {
+      this.changesNotifications.set(workspace, { at: Date.now() });
+      this.publish?.({ type: "workspace.changes", workspace });
+    };
+    if (!previous || Date.now() - previous.at >= 1000) {
+      clearTimeout(previous?.timer);
+      emit();
+    } else if (!previous.timer) previous.timer = setTimeout(emit, 1000 - (Date.now() - previous.at));
+  }
+
+  recordChange(workspace: string, path: string, agent: ChangeAttribution): void {
+    this.db.query(`INSERT INTO change_attributions (workspace, path, terminal, runtime, time, inferred)
+      VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(workspace, path, terminal, runtime)
+      DO UPDATE SET time = excluded.time, inferred = excluded.inferred`)
+      .run(workspace, path, agent.terminal, agent.runtime, agent.time, Number(agent.inferred));
+  }
+
+  changeAttributions(workspace: string): Map<string, ChangeAttribution[]> {
+    const rows = this.db.query<Omit<ChangeAttribution, "inferred"> & { path: string; inferred: number }, [string]>(
+      "SELECT path, terminal, runtime, time, inferred FROM change_attributions WHERE workspace = ? ORDER BY time DESC, rowid DESC",
+    ).all(workspace);
+    const result = new Map<string, ChangeAttribution[]>();
+    for (const { path, ...row } of rows) {
+      if (!result.has(path)) result.set(path, []);
+      result.get(path)!.push({ ...row, inferred: Boolean(row.inferred) });
+    }
+    return result;
+  }
+
+  pruneChanges(workspace: string, dirty: Set<string>, renames: { path: string; originalPath: string | null }[] = []): void {
+    this.db.transaction(() => {
+      const attributions = this.changeAttributions(workspace);
+      for (const { path, originalPath } of renames) {
+        if (!originalPath || dirty.has(originalPath)) continue;
+        for (const agent of attributions.get(originalPath) ?? []) {
+          const current = attributions.get(path)?.find(a => a.terminal === agent.terminal && a.runtime === agent.runtime);
+          if (!current || current.time < agent.time) this.recordChange(workspace, path, agent);
+        }
+      }
+      for (const { path } of this.db.query<{ path: string }, [string]>(
+        "SELECT DISTINCT path FROM change_attributions WHERE workspace = ?",
+      ).all(workspace)) {
+        if (!dirty.has(path)) this.db.query("DELETE FROM change_attributions WHERE workspace = ? AND path = ?").run(workspace, path);
+      }
+    })();
   }
 
   insertWorkspace(value: Workspace): Workspace {

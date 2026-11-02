@@ -38,7 +38,7 @@ export function createHooksRoute({ state, terminals }: RouteContext, schedules?:
           const message = body.payload["last-assistant-message"];
           const line = typeof message === "string" ? latestLine(message) : null;
           if (line) state.updateLatestLine(terminal.id, line, true);
-          terminals.codexTurnComplete(terminal.id);
+          await terminals.codexTurnComplete(terminal.id);
           await schedules?.terminalIdle(terminal.id);
         }
       } else {
@@ -47,6 +47,7 @@ export function createHooksRoute({ state, terminals }: RouteContext, schedules?:
           const line = await transcriptLatestLine(payload.transcript_path);
           if (line) state.updateLatestLine(terminal.id, line, true);
         }
+        await terminals.changes.claudeEdit(terminal, payload);
         const status = claudeStatus(payload);
         if (status && !(body.payload.hook_event_name === "SessionStart" && schedules?.runningTerminal(terminal.id))) {
           if (status === "needs_input") await terminals.captureRequest(terminal.id, payload.message);

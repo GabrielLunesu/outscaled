@@ -68,6 +68,15 @@ const migrations = [
   ALTER TABLE terminals ADD COLUMN requestScreenHash TEXT;
   ALTER TABLE terminals ADD COLUMN latestLine TEXT;
   ALTER TABLE terminals ADD COLUMN latestLineFromAgent INTEGER NOT NULL DEFAULT 0;`,
+  `CREATE TABLE change_attributions (
+    workspace TEXT NOT NULL REFERENCES workspaces(slug),
+    path TEXT NOT NULL,
+    terminal TEXT NOT NULL,
+    runtime TEXT NOT NULL CHECK (runtime IN ('claude-code', 'codex')),
+    time TEXT NOT NULL,
+    inferred INTEGER NOT NULL CHECK (inferred IN (0, 1)),
+    PRIMARY KEY (workspace, path, terminal, runtime)
+  );`,
 ];
 
 export function migrate(db: Database): void {

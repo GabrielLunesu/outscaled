@@ -125,6 +125,8 @@ export const ClaudeCodeHookPayload = z.looseObject({
   notification_type: z.string().optional(),
   message: z.string().optional(),
   transcript_path: z.string().optional(),
+  tool_name: z.string().optional(),
+  tool_input: z.unknown().optional(),
 });
 export type ClaudeCodeHookPayload = z.infer<typeof ClaudeCodeHookPayload>;
 export const ClaudeCodeHookRequest = z.object({
@@ -162,12 +164,29 @@ export type Event = z.infer<typeof Event>;
 // Stored events retain their HTTP/SQLite shape. The notifications below are
 // live-only: clients fetch current state over HTTP on connection or reconnect.
 export const WorkspaceChanged = z.object({ type: z.literal("workspace.changed"), workspace: Slug });
+export const ChangeAttribution = z.object({
+  terminal: Slug,
+  runtime: TerminalRuntime,
+  time: timestamp,
+  inferred: z.boolean(),
+});
+export type ChangeAttribution = z.infer<typeof ChangeAttribution>;
+export const ChangedFile = z.object({
+  path: z.string().min(1),
+  originalPath: z.string().min(1).nullable(),
+  status: z.enum(["modified", "added", "deleted", "renamed", "untracked"]),
+  agents: z.array(ChangeAttribution),
+});
+export type ChangedFile = z.infer<typeof ChangedFile>;
+export const WorkspaceChanges = z.object({ attributionAvailable: z.boolean(), files: z.array(ChangedFile) });
+export type WorkspaceChanges = z.infer<typeof WorkspaceChanges>;
+export const WorkspaceChangesEvent = z.object({ type: z.literal("workspace.changes"), workspace: Slug });
 export const ServerHealth = z.object({ type: z.literal("server.health"), payload: Health });
 export const TerminalLatestLine = z.object({
   type: z.literal("terminal.latest_line"), workspace: Slug, terminal: z.string().min(1),
   payload: z.object({ latestLine: LatestLine }),
 });
-export const StreamMessage = z.union([Event, WorkspaceChanged, ServerHealth, TerminalLatestLine]);
+export const StreamMessage = z.union([Event, WorkspaceChanged, WorkspaceChangesEvent, ServerHealth, TerminalLatestLine]);
 export type StreamMessage = z.infer<typeof StreamMessage>;
 
 export const ScheduleInterval = z.string().regex(/^[1-9]\d*[smhd]$/).refine(value => {

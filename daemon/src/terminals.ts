@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { OpenTerminalRequest, Terminal, TerminalInputRequest, TerminalAnswerRequest, TerminalAnswer, TerminalRuntime, Workspace } from "@outscaled/protocol";
 import type { State } from "./state";
+import { Changes } from "./changes";
 import { latestLine, permissionPrompt } from "./attention";
 import { Tmux, type TmuxPane } from "./tmux";
 
@@ -55,7 +56,7 @@ export function writeClaudeSettings(stateDir: string): string {
   const hooks = Object.fromEntries([
     "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Stop", "Notification",
   ].map(event => [event, [{
-    ...(event === "Notification" ? { matcher: "permission_prompt" } : {}),
+    ...(event === "Notification" ? { matcher: "permission_prompt" } : event === "PostToolUse" ? { matcher: "Write|Edit|MultiEdit|NotebookEdit" } : {}),
     hooks: [{ type: "command", command, timeout: 1 }],
   }]]));
   const path = join(stateDir, "claude-settings.json");
@@ -68,17 +69,27 @@ export class Terminals {
   private readonly screenWatches = new Map<string, { generation: number | null; activity: number; pid: number; readAt: number; dirty: boolean }>();
   private readonly codexNotifyTimes = new Map<string, number>();
 
+  readonly changes: Changes;
+
   constructor(
     private readonly state: State,
     private readonly tmux: Tmux,
     private readonly launch?: { claudeSettings: string; port: number },
-  ) {}
+  ) { this.changes = new Changes(state); }
 
-  codexTurnComplete(id: string): void {
+  async codexTurnComplete(id: string): Promise<void> {
+    const terminal = this.state.getTerminal(id);
+    if (terminal) await this.changes.endTurn(terminal);
     // Remember even duplicate idle notifications: updateTerminalStatus preserves
     // the timestamp when the status is unchanged. Called under the lifecycle lock.
     this.codexNotifyTimes.set(id, Date.now());
     this.state.updateTerminalStatus(id, "idle");
+  }
+
+  async working(id: string): Promise<Terminal | null> {
+    const terminal = this.state.getTerminal(id);
+    if (terminal?.runtime === "codex" && terminal.status !== "working") await this.changes.startTurn(terminal);
+    return this.state.updateTerminalStatus(id, "working");
   }
 
   codexInNotifyGrace(terminal: Terminal, now: number, quiet: boolean): boolean {
@@ -163,6 +174,8 @@ export class Terminals {
         const notify = `notify=${JSON.stringify([...wsCliArgv(), "hook", "codex"])}`;
         launchCommand = `${command.slice(0, end)} -c ${shellQuote(notify)}${command.slice(end)}`;
       }
+      if (scheduled && runtime === "codex") await this.changes.startTurn({ id, workspace: workspace.slug });
+      if (previous) this.changes.forgetTurn(previous.id);
       let pid: number;
       try {
         const env = { WSD_TERMINAL: id, WSD_PORT: String(this.launch?.port ?? 7770) };
@@ -228,6 +241,9 @@ export class Terminals {
   input(workspace: string, name: string, request: TerminalInputRequest): Promise<Terminal> {
     return this.serial(async () => {
       const { terminal, pane } = await this.runningPane(workspace, name);
+      const startsWork = terminal.runtime && ((request.submit ?? request.text !== undefined) || request.keys?.some(key => /^(Enter|Return|C-m|C-j)$/.test(key)));
+      // Snapshot before delivering input: an agent may edit immediately on Enter.
+      if (startsWork && terminal.runtime === "codex" && terminal.status !== "working") await this.changes.startTurn(terminal);
       if (request.text !== undefined) await this.tmux.pasteText(pane, request.text);
       await this.tmux.sendKeys(pane, request.keys ?? []);
       const submit = request.submit ?? request.text !== undefined;

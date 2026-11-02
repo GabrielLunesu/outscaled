@@ -87,6 +87,7 @@ export class Supervisor {
     for (const terminal of terminals) {
       if (this.stopped) return;
       const pane = panes.get(terminal.session);
+      if (!pane || pane.dead || terminal.pid !== pane.pid) this.terminals.changes.forgetTurn(terminal.id);
       if (!pane) {
         this.watches.delete(terminal.id);
         this.outputWatches.delete(terminal.id);
@@ -98,7 +99,7 @@ export class Supervisor {
       try {
         if (terminal.alwaysOn) await this.inspect(terminal, pane);
         else if (pane.dead) this.state.updateTerminalState(terminal.id, { state: "exited", pid: null });
-        if (terminal.runtime === "codex" && !pane.dead) this.inspectOutput(this.state.getTerminal(terminal.id)!, pane);
+        if (terminal.runtime === "codex" && !pane.dead) await this.inspectOutput(this.state.getTerminal(terminal.id)!, pane);
         else this.outputWatches.delete(terminal.id);
         await this.terminals.refreshScreen(this.state.getTerminal(terminal.id)!, pane);
       } catch (error) {
@@ -107,7 +108,7 @@ export class Supervisor {
     }
   }
 
-  private inspectOutput(terminal: Terminal, pane: TmuxPane): void {
+  private async inspectOutput(terminal: Terminal, pane: TmuxPane): Promise<void> {
     const now = Date.now();
     // The fallback cannot see subsequent output in the same second. Allow for
     // its full timestamp bucket before counting two seconds of startup silence.
@@ -162,7 +163,7 @@ export class Supervisor {
     if (terminal.status === "starting") {
       if (now - watch.lastOutputAt >= 2000) this.state.updateTerminalStatus(terminal.id, "idle");
     } else if (watch.outputStreak >= CODEX_WORKING_OUTPUT_OBSERVATIONS) {
-      this.state.updateTerminalStatus(terminal.id, "working");
+      await this.terminals.working(terminal.id);
     }
   }
 
