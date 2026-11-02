@@ -1,0 +1,74 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Gabriel Lunesu. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.monaco-workbench .outscaled-new-agents {
+	box-sizing: border-box;
+	width: min(760px, 94vw);
+	max-height: 90vh;
+	padding: var(--vscode-spacing-size240);
+	border: var(--vscode-strokeThickness) solid var(--vscode-widget-border);
+	border-radius: var(--vscode-cornerRadius-large);
+	background: var(--vscode-editorWidget-background);
+	color: var(--vscode-editorWidget-foreground);
+	box-shadow: var(--vscode-shadow-lg);
+	font: inherit;
+	overflow: auto;
+}
+
+.monaco-workbench .outscaled-new-agents[open] { display: flex; flex-direction: column; }
+.outscaled-launch-content { min-height: 0; overflow: auto; }
+.outscaled-new-agents > .outscaled-launch-note,
+.outscaled-new-agents > footer { flex-shrink: 0; }
+.outscaled-new-agents::backdrop { background: var(--vscode-widget-shadow); }
+.outscaled-new-agents h2 { margin: 0 0 var(--vscode-spacing-size200); font-size: var(--vscode-fontSize-heading2); font-weight: var(--vscode-fontWeight-semiBold); }
+.outscaled-new-agents label { display: flex; flex-direction: column; gap: var(--vscode-spacing-size80); margin-bottom: var(--vscode-spacing-size160); font-size: var(--vscode-fontSize-label1); }
+.outscaled-new-agents input,
+.outscaled-new-agents textarea,
+.outscaled-new-agents select {
+	box-sizing: border-box;
+	width: 100%;
+	min-width: 0;
+	padding: var(--vscode-spacing-size80);
+	border: var(--vscode-strokeThickness) solid var(--vscode-input-border, var(--vscode-widget-border));
+	border-radius: var(--vscode-cornerRadius-small);
+	background: var(--vscode-input-background);
+	color: var(--vscode-input-foreground);
+	font: inherit;
+}
+.outscaled-new-agents textarea { resize: vertical; }
+.outscaled-new-agents .outscaled-launch-query { font-size: var(--vscode-fontSize-heading2); }
+.outscaled-launch-interpretation,
+.outscaled-launch-help,
+.outscaled-launch-note { color: var(--vscode-descriptionForeground); font-size: var(--vscode-fontSize-label1); line-height: 1.5; }
+.outscaled-launch-interpretation { min-height: 1.5em; margin: 0 0 var(--vscode-spacing-size160); }
+.outscaled-launch-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--vscode-spacing-size240); margin-top: var(--vscode-spacing-size200); }
+.outscaled-new-agents fieldset { min-width: 0; padding: 0; border: 0; margin: 0 0 var(--vscode-spacing-size160); }
+.outscaled-new-agents legend { padding: 0; margin-bottom: var(--vscode-spacing-size100); font-weight: var(--vscode-fontWeight-semiBold); }
+.outscaled-launch-options { display: flex; flex-wrap: wrap; gap: var(--vscode-spacing-size60); }
+.outscaled-new-agents button {
+	padding: var(--vscode-spacing-size60) var(--vscode-spacing-size100);
+	border: var(--vscode-strokeThickness) solid var(--vscode-button-border, var(--vscode-widget-border));
+	border-radius: var(--vscode-cornerRadius-small);
+	background: var(--vscode-button-secondaryBackground);
+	color: var(--vscode-button-secondaryForeground);
+	font: inherit;
+	cursor: pointer;
+}
+.outscaled-new-agents button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+.outscaled-new-agents button[aria-pressed="true"] { border-color: var(--vscode-focusBorder); background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
+.outscaled-new-agents button.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+.outscaled-new-agents button.primary:hover { background: var(--vscode-button-hoverBackground); }
+.outscaled-new-agents button:disabled { opacity: 0.5; cursor: default; }
+.outscaled-new-agents :focus-visible { outline: 2px solid var(--vscode-focusBorder); outline-offset: 2px; }
+.outscaled-new-agents .outscaled-layout-choice { width: 48px; height: 40px; display: flex; padding: var(--vscode-spacing-size60); }
+.outscaled-layout-cell { background: currentColor; opacity: 0.65; flex: 1; min-width: 0; border-radius: var(--vscode-cornerRadius-xSmall); }
+.outscaled-launch-shape { display: flex; flex: 1; min-width: 0; gap: var(--vscode-spacing-size40); }
+.outscaled-launch-shape[data-direction="down"] { flex-direction: column; }
+.outscaled-launch-pane { flex: 1; display: flex; flex-direction: column; justify-content: center; min-width: 0; padding: var(--vscode-spacing-size80); background: var(--vscode-editor-background); border-radius: var(--vscode-cornerRadius-medium); }
+.outscaled-launch-pane label { margin: 0; }
+.outscaled-new-agents footer { display: flex; align-items: end; flex-wrap: wrap; gap: var(--vscode-spacing-size80); padding-top: var(--vscode-spacing-size160); border-top: var(--vscode-strokeThickness) solid var(--vscode-widget-border); }
+.outscaled-new-agents footer label { flex: 1; min-width: 100px; margin: 0; }
+.outscaled-new-agents [hidden] { display: none; }
+@media (max-width: 620px) { .outscaled-launch-columns { grid-template-columns: 1fr; } }

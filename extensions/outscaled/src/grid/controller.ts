@@ -10,10 +10,12 @@ import { DaemonService } from '../daemon/service';
 import { WorkspaceSelection } from '../workspaces/selection';
 import { containsUri, WorkspaceLocation } from '../workspaces/uri';
 import { workspaceKey } from '../workspaces/identity';
-import { ensureTerminal, listTerminals } from './daemonTerminals';
+import { createTerminal, ensureTerminal, listTerminals } from './daemonTerminals';
 import { GridMemory, gridMemoryKey } from './memory';
-import { expandPreset, presets } from './presets';
+import { PresetStore, builtInPresets, expandPreset, presets } from './presets';
 import { attachEnv, findWsPath } from './wsPath';
+import { AgentsLaunch, insertLaunch, launchLayout } from '../../../../src/vs/workbench/contrib/outscaled/common/agentsLaunch.js';
+import { planLaunch } from './launch';
 import { agentsSnapshot } from './mapping';
 
 /** Read-only subset of the built-in Git extension's v1 API. */
@@ -26,6 +28,7 @@ type OpenRequest = { kind: 'preset'; workspace: WorkspaceLocation; preset: strin
 export class TerminalGrid implements vscode.Disposable {
 	readonly memory: GridMemory;
 	private queue = Promise.resolve();
+	private readonly presetStore = new PresetStore();
 	private stopped = false;
 	private executable?: string;
 	private receipt?: AgentsReceipt;
@@ -49,13 +52,18 @@ export class TerminalGrid implements vscode.Disposable {
 			vscode.commands.registerCommand(agentsRequestCommand, async (value: unknown): Promise<AgentsReceipt> => {
 				if (!isAgentsRequest(value)) { this.log('Invalid agents bridge request'); return { version: 1, ok: false, error: 'Invalid request' }; }
 				try {
-					if (value.action === 'newAgents') {await vscode.commands.executeCommand('outscaled.openGrid');}
+					if (value.action === 'newAgents') {await vscode.commands.executeCommand('outscaled.agents.new');}
 					else {
 						const snapshot = this.snapshot();
 						const workspace = snapshot.workspaces.find(workspace => workspace.id === value.workspace);
 						if (!workspace) {throw new Error(vscode.l10n.t('Workspace is unavailable'));}
 						const location = { host: workspace.server, slug: workspace.name };
-						if (value.action === 'switch') {await vscode.commands.executeCommand('outscaled.switchWorkspace', location);}
+						if (value.action === 'presets' || value.action === 'savePreset') {
+							if (value.action === 'savePreset') { await this.enqueue(() => this.presetStore.save(value.workspace, value.name, value.choices)); }
+							return { version: 1, ok: true, presets: [...builtInPresets().map(preset => ({ ...preset, name: vscode.l10n.t(preset.name) })), ...await this.presetStore.load(value.workspace)] };
+						}
+						if (value.action === 'launch') { await this.launch(location, value.choices, value.focused); }
+						else if (value.action === 'switch') {await vscode.commands.executeCommand('outscaled.switchWorkspace', location);}
 						else {
 							const terminal = workspace.terminals.find(terminal => terminal.id === value.terminal);
 							if (!terminal) {throw new Error(vscode.l10n.t('Terminal is unavailable'));}
@@ -136,6 +144,27 @@ export class TerminalGrid implements vscode.Disposable {
 			await this.publish(focus ? { workspace: workspaceKey(request.workspace), terminal: focus } : undefined);
 		});
 	}
+	private async launch(workspace: WorkspaceLocation, choices: AgentsLaunch, focused?: string): Promise<void> {
+		if (!this.selection.current || workspaceKey(workspace) !== workspaceKey(this.selection.current)) { throw new Error(vscode.l10n.t('Select this workspace before launching agents')); }
+		await this.enqueue(async () => {
+			this.executable = await findWsPath(vscode.workspace.getConfiguration('outscaled').get<string>('wsPath'));
+			const terminals = await listTerminals(this.service, workspace);
+			const tree = this.snapshot().workspaces.find(candidate => candidate.id === workspaceKey(workspace))!.layout;
+			const plan = planLaunch(choices, terminals.map(terminal => terminal.name), tree, focused);
+			const ids: string[] = [];
+			try {
+				for (const pane of plan.panes) { ids.push((await createTerminal(this.service, workspace, pane)).id); }
+				const layout = insertLaunch(tree, launchLayout(choices, ids), choices.where, focused);
+				this.memory.remember(workspace, layout, [...terminals.map(terminal => terminal.id), ...ids]);
+				await this.context.workspaceState.update(gridMemoryKey, this.memory.serialize());
+			} finally {
+				// Reconcile partial launches too; accepted daemon operations are never rolled back by stopping agents.
+				await this.service.synchronize(workspace.host);
+				await this.publish(ids[0] ? { workspace: workspaceKey(workspace), terminal: ids[0] } : undefined);
+			}
+		});
+	}
+
 	async findPane(host: string, terminalId: string) {
 		const receipt = await vscode.commands.executeCommand<unknown>(agentsInspectCommand);
 		if (isAgentsReceipt(receipt) && receipt.ok) {this.receipt = receipt;}

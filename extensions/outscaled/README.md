@@ -90,3 +90,24 @@ scripts/serial.sh node extensions/outscaled/test/ui.mts
 ```
 
 The Playwright acceptance check uses a throwaway profile, config, private `WSD_PORT` and `WSD_TMUX_SOCKET`, and fake Claude/Codex executables that echo typed input. It verifies the core sidebar and removal of the extension tree, row and dot switching, live badges and hovers, keyboard navigation and workspace shortcuts in both modes, pane headers, status hooks and needs-you routing across workspaces, native paste/find, unchanged terminal instances and attach process ids after closing Code editors, preserved tmux output, two workspace grids after reload, and all six layout geometries. A private SSH double also verifies `ws attach --on`, input and Code-mode file reads for a VPS workspace, without contacting a real SSH host or the daemon on port 7770. It saves screenshots and proof records to the supplied directory, then stops the app, daemon and private tmux server and removes fixture state. Use `UI_INSPECT_LAUNCH=1` to pause after each launch screenshot for visual inspection; create `launch-inspected` in the evidence directory to continue.
+
+
+## New agents (Phase 4, item 2)
+
+Press ⌘N anywhere, including inside a terminal, or click **New agents** in the title bar. Choose a preset and click **Create**, or type a command such as `2x2 claude`, `codex right`, `2 claude 2 codex`, `stacked shell` or `claude every 30m`. The dialog shows the interpreted layout, agent per pane, run mode and placement; unrecognized text is reported. All six layouts support pane-specific Claude, Codex and Shell choices.
+
+**Replace View** replaces grid membership without stopping any daemon session. Replaced agents remain in the sidebar dots and stay outside the grid after reload. **Add to View** places the chosen layout to the right of the whole grid; **Right of…** and **Below…** insert beside the pane focused before opening the dialog. The first new pane receives focus. New launches allocate the next unused name for each runtime, including names held by exited terminals. Existing sessions are never restarted by a launch.
+
+**Quick** creates ordinary terminals. **Always On** passes the daemon's `alwaysOn` flag. **Scheduled** accepts intervals such as `30m`, `2h` and `1d` and can be saved as a preset, but Create remains disabled until Phase 4 item 5 implements scheduled agents in terminals. A first prompt is passed as one safely quoted initial argument to Claude and Codex, so it survives startup screens. Shell panes ignore it.
+
+**Save as Preset** stores all choices under a name for the selected workspace (including its server), in `$OUTSCALED_CONFIG_DIR/presets.toml`, defaulting to `~/.config/outscaled/presets.toml`. The file uses `[[preset]]` entries with `workspace`, `name` and a `choices` table. Saves replace a matching name in that workspace and preserve other workspaces. This is personal configuration outside the repository. Built-in presets remain available alongside saved ones.
+
+The version 1 internal bridge adds validated `presets`, `savePreset` and `launch` requests; old request and snapshot shapes remain valid. Core owns the modal and pure command parser; the extension owns persistence, launch planning and daemon calls. The legacy **Open Terminal Grid** command continues to reuse its named terminals.
+
+Run the hermetic acceptance harness after building client and extension output:
+
+```sh
+scripts/serial.sh node extensions/outscaled/test/ui.mts /absolute/path/to/evidence
+```
+
+It uses a dynamically assigned daemon port, a private tmux socket, throwaway app profile and configuration, and fake agent/SSH executables. It verifies existing terminal behavior plus the modal, typed commands, non-destructive replacement and reload, insertion, literal first prompts, run modes and saved presets; it writes screenshots and cleanup evidence to the chosen folder.

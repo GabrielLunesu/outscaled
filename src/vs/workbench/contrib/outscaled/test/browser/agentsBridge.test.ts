@@ -5,6 +5,7 @@
 
 import { strictEqual } from 'assert';
 import { ensureNoDisposablesAreLeakedInTestSuite } from '../../../../../base/test/common/utils.js';
+import { defaultLaunch } from '../../common/agentsLaunch.js';
 import { AgentsSnapshot, isAgentsReceipt, isAgentsRequest, isAgentsSnapshot } from '../../common/agentsBridge.js';
 import { isAgentsLayout, presetLayout } from '../../common/agentsLayout.js';
 
@@ -17,6 +18,18 @@ suite('Outscaled - Agents Bridge', () => {
 		for (const request of [{ version: 1, action: 'newAgents' }, { version: 1, action: 'switch', workspace: 'demo' }, { version: 1, action: 'focus', workspace: 'demo', terminal: 'a' }]) { strictEqual(isAgentsRequest(request), true); }
 		strictEqual(isAgentsReceipt({ version: 1, ok: true, panes: [{ workspace: 'demo', terminal: 'a', visible: true, processId: 42 }] }), true);
 	});
+	test('validates launch requests, presets and receipts without changing version 1', () => {
+		const choices = defaultLaunch();
+		for (const request of [{ action: 'presets' }, { action: 'savePreset', name: 'Demo', choices }, { action: 'launch', choices, focused: 'a' }]) {
+			strictEqual(isAgentsRequest({ version: 1, workspace: 'workspace', ...request }), true);
+		}
+		for (const request of [{ action: 'presets' }, { action: 'savePreset', workspace: 'w', name: '', choices }, { action: 'launch', workspace: 'w', choices: { ...choices, agents: ['bad'] } }, { action: 'launch', workspace: 'w', choices, focused: 1 }]) {
+			strictEqual(isAgentsRequest({ version: 1, ...request }), false);
+		}
+		strictEqual(isAgentsReceipt({ version: 1, ok: true, presets: [{ name: 'Demo', choices }] }), true);
+		strictEqual(isAgentsReceipt({ version: 1, ok: true, presets: [{ name: 'Demo', choices: { ...choices, prompt: 1 } }] }), false);
+	});
+
 	test('rejects wrong versions, malformed launches, duplicate identities and dangling membership', () => {
 		for (const value of [null, {}, { ...snapshot, version: 2 }, { ...snapshot, workspaces: [{ ...snapshot.workspaces[0], path: 42 }] }, { ...snapshot, workspaces: [snapshot.workspaces[0], snapshot.workspaces[0]] },
 			{ ...snapshot, workspaces: [{ ...snapshot.workspaces[0], layout: presetLayout('single', ['missing']) }] },

@@ -68,7 +68,17 @@ const proof = () => win.locator('.outscaled-agent-pane').evaluateAll((panes: Ele
 		x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
 }));
 try {
-	for (const agent of ['claude', 'codex']) {writeFileSync(join(bin, agent), `#!/bin/sh\necho 'fake ${agent} ready — AGENTS_VIEW'\nwhile IFS= read -r line; do\nif [ "$line" = HISTORY ]; then i=1; while [ "$i" -le 80 ]; do echo "AGENTS_HISTORY_$i"; i=$((i+1)); done; echo 'fake ${agent} ready — AGENTS_VIEW'; fi\necho "received:$line"\ndone\n`, { mode: 0o755 });}
+	const agentLog = join(temporary, 'agent-args.jsonl');
+	for (const agent of ['claude', 'codex']) { writeFileSync(join(bin, agent), `#!${process.execPath}
+const {appendFileSync}=require('node:fs');
+appendFileSync(process.env.TEST_AGENT_LOG,JSON.stringify({agent:'${agent}',args:process.argv.slice(2)})+'\\n');
+console.log('fake ${agent} ready — AGENTS_VIEW');
+require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+ if(line==='HISTORY'){for(let i=1;i<=80;i++)console.log('AGENTS_HISTORY_'+i);console.log('fake ${agent} ready — AGENTS_VIEW');}
+ console.log('received:'+line);
+});
+`, { mode: 0o755 }); }
+
 	writeFileSync(join(bin, 'ssh'), `#!${process.execPath}
 const {appendFileSync}=require('node:fs');
 const {connect,createServer}=require('node:net');
@@ -96,7 +106,7 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	writeFileSync(join(folder, 'README.md'), '# Agents view\n\nNative Code mode workspace file.\n');
 	const second = join(temporary, 'second'); mkdirSync(second); writeFileSync(join(second, 'README.md'), '# Second workspace\n');
 	const env = { ...process.env, SHELL: '/bin/sh', PATH: `${bin}:${process.env.PATH}`, NODE_ENV: 'development', VSCODE_DEV: '1', VSCODE_CLI: '1',
-		TEST_SSH_LOG: sshLog, WSD_PORT: String(port), WSD_TMUX_SOCKET: socket, WSD_CONFIG_DIR: config, WSD_STATE_DIR: join(temporary, 'state'),
+		TEST_AGENT_LOG: agentLog, TEST_SSH_LOG: sshLog, WSD_PORT: String(port), WSD_TMUX_SOCKET: socket, WSD_CONFIG_DIR: config, WSD_STATE_DIR: join(temporary, 'state'),
 		WSD_WORKSPACES_DIR: join(temporary, 'workspaces'), OUTSCALED_CONFIG_DIR: config };
 	delete env.ELECTRON_RUN_AS_NODE; delete env.GIT_CONFIG_COUNT; delete env.GIT_CONFIG_PARAMETERS;
 	assert.equal(spawnSync('tmux', ['-f', '/dev/null', '-S', socket, 'new-session', '-d', '-s', 'fixture', '/bin/sleep 3600'], { env }).status, 0);
@@ -131,27 +141,31 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	await win.locator('.outscaled-workspace-row').filter({ hasText: 'agents-demo' }).click();
 	await until(async () => await win.locator('.outscaled-workspace-name').innerText() === 'agents-demo', 'selected workspace after dedicated-window reload', 60000);
 	// Inspect object identity and complete xterm buffers through a test-only command.
-	await win.evaluate(async (base: string) => {
-		const { CommandsRegistry } = await import(base + 'vs/platform/commands/common/commands.js');
-		const { MenuRegistry, MenuId } = await import(base + 'vs/platform/actions/common/actions.js');
-		const { IAgentsService } = await import(base + 'vs/workbench/contrib/outscaled/browser/agentsService.js');
-		const { ITerminalService } = await import(base + 'vs/workbench/contrib/terminal/browser/terminal.js');
-		const { IEditorService } = await import(base + 'vs/workbench/services/editor/common/editorService.js');
-		const { URI } = await import(base + 'vs/base/common/uri.js');
-		const { ICommandService } = await import(base + 'vs/platform/commands/common/commands.js');
-						CommandsRegistry.registerCommand('outscaled.agentsProbe', (accessor: ServicesAccessor) => {
-			const editors = accessor.get(IEditorService);
-			(window as ProbedWindow).__agentsProbe = { agents: accessor.get(IAgentsService), terminals: accessor.get(ITerminalService), commands: accessor.get(ICommandService), originals: [], xterms: [], openFile: async resource => { await editors.openEditor({ resource: URI.parse(resource), options: { pinned: true } }); } };
-		});
-		MenuRegistry.appendMenuItem(MenuId.CommandPalette, { command: { id: 'outscaled.agentsProbe', title: 'Outscaled Agents Probe' } });
-	}, pathToFileURL(join(root, 'out/')).href.replace('file://', 'vscode-file://vscode-app'));
-	await win.keyboard.press('F1'); await win.locator('.quick-input-widget input').fill('>Outscaled Agents Probe');
-	await win.locator('.quick-input-list .monaco-list-row').filter({ hasText: 'Outscaled Agents Probe' }).first().waitFor(); await win.keyboard.press('Enter');
-	await until(async () => await win.evaluate(() => !!(window as ProbedWindow).__agentsProbe), 'probe');
+	const installProbe = async () => {
+		await win.evaluate(async (base: string) => {
+			const { CommandsRegistry } = await import(base + 'vs/platform/commands/common/commands.js');
+			const { MenuRegistry, MenuId } = await import(base + 'vs/platform/actions/common/actions.js');
+			const { IAgentsService } = await import(base + 'vs/workbench/contrib/outscaled/browser/agentsService.js');
+			const { ITerminalService } = await import(base + 'vs/workbench/contrib/terminal/browser/terminal.js');
+			const { IEditorService } = await import(base + 'vs/workbench/services/editor/common/editorService.js');
+			const { URI } = await import(base + 'vs/base/common/uri.js');
+			const { ICommandService } = await import(base + 'vs/platform/commands/common/commands.js');
+			CommandsRegistry.registerCommand('outscaled.agentsProbe', (accessor: ServicesAccessor) => {
+				const editors = accessor.get(IEditorService);
+				(window as ProbedWindow).__agentsProbe = { agents: accessor.get(IAgentsService), terminals: accessor.get(ITerminalService), commands: accessor.get(ICommandService), originals: [], xterms: [], openFile: async resource => { await editors.openEditor({ resource: URI.parse(resource), options: { pinned: true } }); } };
+			});
+			MenuRegistry.appendMenuItem(MenuId.CommandPalette, { command: { id: 'outscaled.agentsProbe', title: 'Outscaled Agents Probe' } });
+		}, pathToFileURL(join(root, 'out/')).href.replace('file://', 'vscode-file://vscode-app'));
+		await win.keyboard.press('F1'); await win.locator('.quick-input-widget input').fill('>Outscaled Agents Probe');
+		await win.locator('.quick-input-list .monaco-list-row').filter({ hasText: 'Outscaled Agents Probe' }).first().waitFor(); await win.keyboard.press('Enter');
+		await until(async () => await win.evaluate(() => !!(window as ProbedWindow).__agentsProbe), 'probe');
+	};
+	await installProbe();
 	const command = (id: string, ...args: unknown[]) => win.evaluate(([id, args]: [string, unknown[]]) => (window as ProbedWindow).__agentsProbe.commands.executeCommand(id, ...args), [id, args]);
 	const openPreset = async (label: string) => {
-		await win.locator('.outscaled-title-controls').getByRole('button', { name: 'New agents', exact: true }).click();
+		const opening = command('outscaled.openGrid');
 		await win.locator('.quick-input-list .monaco-list-row').filter({ hasText: label }).click();
+		await opening;
 	};
 	const switchWorkspace = async (slug: string, host = 'local') => {
 		await command('outscaled.switchWorkspace', { host, slug });
@@ -180,7 +194,11 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	const secondTerminals = await request('workspaces/second-demo/terminals');
 	const secondGrid = await proof(); await capture('03-second');
 	const row = (name: string) => win.locator('.outscaled-workspace-row').filter({ has: win.locator('.outscaled-workspace-label', { hasText: name }) }).first();
-	const selected = async (name: string) => until(async () => await win.locator('.outscaled-workspace-name').innerText() === name, `sidebar switch to ${name}`);
+	const selected = async (name: string) => {
+		await until(async () => await win.locator('.outscaled-workspace-name').innerText() === name, `sidebar switch to ${name}`);
+		// Wait for root restoration and its focus callback before sending another key.
+		await command('outscaled.switchWorkspace', { host: 'local', slug: name });
+	};
 	const shortcut = async (number: number, name: string) => {
 		await win.keyboard.press(`Meta+${number}`); await selected(name);
 		// The title updates before the native root change. A queued no-op switch
@@ -291,23 +309,7 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	await until(async () => await win.locator('.outscaled-workspace-name').innerText().catch(() => '') === 'second-demo' && (await proof()).length === 2, 'second grid restored after reload', 60000);
 	await capture('09-reloaded-second');
 	// Inspect object identity and complete xterm buffers through a test-only command.
-	await win.evaluate(async (base: string) => {
-		const { CommandsRegistry } = await import(base + 'vs/platform/commands/common/commands.js');
-		const { MenuRegistry, MenuId } = await import(base + 'vs/platform/actions/common/actions.js');
-		const { IAgentsService } = await import(base + 'vs/workbench/contrib/outscaled/browser/agentsService.js');
-		const { ITerminalService } = await import(base + 'vs/workbench/contrib/terminal/browser/terminal.js');
-		const { IEditorService } = await import(base + 'vs/workbench/services/editor/common/editorService.js');
-		const { URI } = await import(base + 'vs/base/common/uri.js');
-		const { ICommandService } = await import(base + 'vs/platform/commands/common/commands.js');
-						CommandsRegistry.registerCommand('outscaled.agentsProbe', (accessor: ServicesAccessor) => {
-			const editors = accessor.get(IEditorService);
-			(window as ProbedWindow).__agentsProbe = { agents: accessor.get(IAgentsService), terminals: accessor.get(ITerminalService), commands: accessor.get(ICommandService), originals: [], xterms: [], openFile: async resource => { await editors.openEditor({ resource: URI.parse(resource), options: { pinned: true } }); } };
-		});
-		MenuRegistry.appendMenuItem(MenuId.CommandPalette, { command: { id: 'outscaled.agentsProbe', title: 'Outscaled Agents Probe' } });
-	}, pathToFileURL(join(root, 'out/')).href.replace('file://', 'vscode-file://vscode-app'));
-	await win.keyboard.press('F1'); await win.locator('.quick-input-widget input').fill('>Outscaled Agents Probe');
-	await win.locator('.quick-input-list .monaco-list-row').filter({ hasText: 'Outscaled Agents Probe' }).first().waitFor(); await win.keyboard.press('Enter');
-	await until(async () => await win.evaluate(() => !!(window as ProbedWindow).__agentsProbe), 'probe');
+	await installProbe();
 	await switchWorkspace('agents-demo');
 	await until(async () => (await proof()).length === 4 && (await proof())[2].text?.includes('PASTED_TO_THIRD'), 'first grid restored after reload');
 	assert.deepEqual((await request('workspaces/agents-demo/terminals')).map((terminal: any) => [terminal.id, terminal.session, terminal.pid]), terminals.map((terminal: any) => [terminal.id, terminal.session, terminal.pid]));
@@ -334,6 +336,99 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	}
 	await openPreset('2 Claude + 2 Codex');
 	await until(async () => (await proof()).length === 4 && (await proof())[2].text?.includes('PASTED_TO_THIRD'), 'preset reuses retained clients');
+	// Phase 4 item 2: the modal creates fresh agents; legacy openGrid above still
+	// verifies all pre-existing client lifetime, geometry and transport behavior.
+	const dialog = win.getByRole('dialog', { name: 'New Agents', exact: true });
+	const openDialog = async () => {
+		await win.locator('.outscaled-title-controls').getByRole('button', { name: 'New agents', exact: true }).click();
+		await dialog.waitFor();
+		await dialog.getByRole('button', { name: '2 Claude + 2 Codex', exact: true }).waitFor();
+	};
+	const create = async () => { await dialog.getByRole('button', { name: 'Create', exact: true }).click(); await dialog.waitFor({ state: 'detached' }); };
+	await win.locator('.outscaled-agent-pane').nth(1).locator('.xterm-helper-textarea').focus();
+	const priorFocus = await win.evaluate(() => document.activeElement?.closest('.outscaled-agent-pane')?.getAttribute('data-terminal-id'));
+	await win.keyboard.press('Meta+n'); await dialog.waitFor();
+	assert.equal(await dialog.getByLabel('Type What You Want', { exact: true }).evaluate(input => input === document.activeElement), true);
+	await capture('new-00-empty');
+	await win.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
+	assert.equal(await win.evaluate(() => document.activeElement?.closest('.outscaled-agent-pane')?.getAttribute('data-terminal-id')), priorFocus);
+	await command('outscaled.agents.mode', 'code');
+	await win.keyboard.press('Meta+n'); await dialog.waitFor();
+	await win.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
+	await until(async () => await win.evaluate(() => (window as ProbedWindow).__agentsProbe.agents.mode === 'code'), 'cancel restores Code mode');
+	await command('outscaled.agents.mode', 'agents');
+	await openDialog();
+	await dialog.getByRole('button', { name: '2 Claude + 2 Codex', exact: true }).click(); await capture('new-01-preset'); await create();
+	await until(async () => (await proof()).length === 4 && (await proof()).every(pane => pane.text?.includes('AGENTS_VIEW')), 'new preset grid');
+	await until(async () => await win.evaluate(() => document.activeElement?.closest('.outscaled-agent-pane')?.getAttribute('data-terminal-id')) === (await proof())[0].id, 'first new pane receives focus');
+	await capture('new-02-preset-grid');
+	for (const [typed, expected] of [
+		['2x2 claude', { layout: '2×2', agents: ['claude', 'claude', 'claude', 'claude'], run: 'quick', where: 'replace' }],
+		['codex right', { layout: 'Single', agents: ['codex'], run: 'quick', where: 'right' }],
+		['claude every 30m', { layout: 'Single', agents: ['claude'], run: 'scheduled', where: 'replace' }]
+	] as const) {
+		await openDialog(); await dialog.getByLabel('Type What You Want', { exact: true }).fill(typed);
+		assert.equal(await dialog.getByRole('button', { name: expected.layout, exact: true }).getAttribute('aria-pressed'), 'true');
+		assert.deepEqual(await dialog.locator('.outscaled-launch-pane select').evaluateAll(selects => selects.map(select => (select as HTMLSelectElement).value)), [...expected.agents]);
+		assert.equal(await dialog.getByLabel('Runs', { exact: true }).inputValue(), expected.run);
+		assert.equal(await dialog.getByLabel('Where', { exact: true }).inputValue(), expected.where);
+		if (expected.run === 'scheduled') {
+			assert.equal(await dialog.getByLabel('Interval', { exact: true }).inputValue(), '30m');
+			assert.equal(await dialog.getByRole('button', { name: 'Create', exact: true }).isDisabled(), true);
+			await dialog.getByText('Scheduled agents in terminals are coming', { exact: false }).waitFor();
+			const before = await request('workspaces/agents-demo/terminals');
+			await win.keyboard.press('Enter');
+			assert.deepEqual((await request('workspaces/agents-demo/terminals')).map(terminal => terminal.id), before.map(terminal => terminal.id));
+		}
+		await capture('new-typed-' + typed.replaceAll(' ', '-'));
+		await win.keyboard.press('Escape');
+	}
+	const replaced = await proof();
+	const runningBefore = await request('workspaces/agents-demo/terminals');
+	await openDialog(); await dialog.getByRole('button', { name: '1 Claude + shell', exact: true }).click(); await create();
+	await until(async () => (await proof()).length === 2, 'replacement grid');
+	assert.ok((await proof()).every(pane => !replaced.some(old => old.id === pane.id)));
+	for (const terminal of runningBefore) {
+		assert.equal(spawnSync('tmux', ['-S', socket, 'has-session', '-t', '=' + terminal.session]).status, 0);
+	}
+	await capture('new-03-replace-grid');
+	const literalPrompt = 'Say "hello" and \'goodbye\': $(touch pwned) `touch pwned`\nnext line';
+	await openDialog(); await dialog.getByLabel('Type What You Want', { exact: true }).fill('codex right');
+	const anchor = await win.evaluate(() => (window as ProbedWindow).__agentsProbe.agents.owners.get((window as ProbedWindow).__agentsProbe.agents.snapshot.workspaces.find(workspace => workspace.selected)!.id)?.active);
+	const beforeRight = await proof();
+	await dialog.getByLabel('First Prompt (Optional)', { exact: true }).fill(literalPrompt); await create();
+	await until(async () => (await proof()).length === 3 && (await proof()).every(pane => pane.text?.includes('AGENTS_VIEW') || !pane.text?.includes('fake')), 'right grid');
+	await until(() => readFileSync(agentLog, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)).some(entry => entry.agent === 'codex' && entry.args.at(-1) === literalPrompt), 'prompt delivered literally');
+	assert.equal(existsSync(join(folder, 'pwned')), false);
+	const rightGrid = await proof(); const anchorBox = rightGrid.find(pane => pane.id === anchor)!;
+	const newRight = rightGrid.find(pane => !beforeRight.some(old => old.id === pane.id))!;
+	assert.ok(newRight.x > anchorBox.x && newRight.y === anchorBox.y);
+	await capture('new-04-right-grid');
+	await openDialog(); await dialog.getByLabel('Type What You Want', { exact: true }).fill('side by side shell add'); await create();
+	await until(async () => (await proof()).length === 5, 'add grid');
+	const added = await proof();
+	assert.ok(added.slice(3).every(pane => pane.x >= Math.max(...added.slice(0, 3).map(old => old.x + old.width))));
+	await capture('new-05-add-grid');
+	await openDialog(); await dialog.getByLabel('Type What You Want', { exact: true }).fill('claude always');
+	await dialog.getByLabel('Preset Name', { exact: true }).fill('My always-on Claude');
+	await dialog.getByRole('button', { name: 'Save as Preset', exact: true }).click();
+	await dialog.getByText('Preset saved for this workspace.', { exact: true }).waitFor();
+	assert.ok(readFileSync(join(config, 'presets.toml'), 'utf8').includes('My always-on Claude'));
+	await create(); await until(async () => (await proof()).length === 1, 'always on grid');
+	const alwaysId = (await proof())[0].id;
+	assert.equal((await request('workspaces/agents-demo/terminals')).find(terminal => terminal.id === alwaysId).alwaysOn, true);
+	await capture('new-06-always-grid');
+	await command('workbench.action.reloadWindow').catch(() => {});
+	await win.waitForFunction(() => !(window as ProbedWindow).__agentsProbe);
+	await until(async () => (await proof()).length === 1 && (await proof())[0].id === alwaysId, 'replacement membership survives reload', 60000);
+	await installProbe();
+	assert.ok((await proof()).every(pane => !replaced.some(old => old.id === pane.id)));
+	for (const terminal of runningBefore) { assert.equal(spawnSync('tmux', ['-S', socket, 'has-session', '-t', '=' + terminal.session]).status, 0); }
+	await openDialog(); await dialog.getByRole('button', { name: 'My always-on Claude', exact: true }).waitFor();
+	await capture('new-07-saved-after-reload'); await win.keyboard.press('Escape');
+	await capture('new-08-grid-after-reload');
+	assert.equal(await row('agents-demo').locator('.outscaled-workspace-dot').count(), (await request('workspaces/agents-demo/terminals')).length);
+
 	// Exercise the retained VPS transport through a private SSH double. Both endpoints
 	// use this fixture daemon; no connection is made to port 7770 or a real host.
 	await request('hooks/claude-code', { terminal: target.id, payload: { hook_event_name: 'Stop' } });
@@ -378,7 +473,7 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	assert.equal(ssh.filter(entry => entry.kind === 'attach').length, 2);
 	writeFileSync(join(evidence, 'proof.json'), JSON.stringify({ initial, working, needsInput, before, after, terminals, secondTerminals, geometries, remote, ssh, errors }, null, 2));
 	assert.deepEqual(errors, []);
-	console.log('PASS: core sidebar, live badges, dot/row focus, keyboard navigation, Agents/Code shortcuts, native commands, identity, tmux history, workspace/reload persistence, needs-you focus, six split geometries');
+	console.log('PASS: core sidebar, live badges, dot/row focus, keyboard navigation, Agents/Code shortcuts, native commands, identity, tmux history, workspace/reload persistence, needs-you focus, six split geometries, New agents modal and keyboard focus, typed commands, fresh launches, non-destructive replacement/reload, right/add insertion, literal prompts, run modes and private presets');
 } finally {
 	writeFileSync(join(evidence, 'page-errors.json'), JSON.stringify(errors, null, 2));
 	writeFileSync(join(evidence, 'renderer-errors.json'), JSON.stringify(rendererErrors, null, 2));

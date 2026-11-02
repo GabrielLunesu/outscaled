@@ -23,7 +23,7 @@ class AgentsTitleControl extends Disposable {
 			this._register(dom.addDisposableListener(control, 'click', run));
 			return control;
 		};
-		button(this.element, localize('agents.new', "New agents"), () => { void agents.request({ version: 1, action: 'newAgents' }); });
+		button(this.element, localize('agents.new', "New agents"), () => { void commands.executeCommand('outscaled.agents.new'); });
 		const needsYou = button(this.element, '', () => {
 			for (const workspace of agents.snapshot.workspaces) {
 				const waiting = workspace.terminals.find(terminal => terminal.status === 'needs_input');

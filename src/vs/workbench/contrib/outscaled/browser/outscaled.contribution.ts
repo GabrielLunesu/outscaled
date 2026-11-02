@@ -19,6 +19,7 @@ import { ISetTerminalStatusRequest, TerminalStatus, TerminalStatusController } f
 import './media/terminalStatus.css';
 import './agentsWorkbench.js';
 import './agentsTitleControl.js';
+import './agentsDialog.js';
 
 const controller = new TerminalStatusController();
 
