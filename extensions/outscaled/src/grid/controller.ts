@@ -37,9 +37,9 @@ export class TerminalGrid implements vscode.Disposable {
 		this.subscriptions.push(selection.onWillChangeSelectedWorkspace(event => { event.waitUntil(this.enqueue(() => this.publish(undefined, event.current))); }),
 			service.onDidChange(() => { void this.enqueue(() => this.publish()); }),
 			selection.onDidChangeSelectedWorkspace(event => { event.waitUntil(this.enqueue(() => this.publish())); }),
-			vscode.commands.registerCommand('outscaled.openGrid', async (node?: { server: { host: string }; workspace: { slug: string } }) => {
+			vscode.commands.registerCommand('outscaled.openGrid', async () => {
 				try {
-					const workspace = node ? { host: node.server.host, slug: node.workspace.slug } : this.selection.current;
+					const workspace = this.selection.current;
 					if (!workspace) { await vscode.commands.executeCommand('outscaled.switchWorkspace'); return; }
 					const choice = await vscode.window.showQuickPick(presets.map(preset => ({ label: vscode.l10n.t(preset.label), preset })), { placeHolder: vscode.l10n.t('Open a terminal grid') });
 					if (choice) {await this.open({ kind: 'preset', workspace, preset: choice.preset.id });}

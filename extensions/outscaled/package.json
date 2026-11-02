@@ -41,36 +41,7 @@
 		"configurationDefaults": {
 			"workbench.colorTheme": "carbon-candy-matrix-neon-blur"
 		},
-		"viewsContainers": {
-			"activitybar": [
-				{
-					"id": "outscaled",
-					"title": "%container.title%",
-					"icon": "$(server-environment)"
-				}
-			]
-		},
-		"views": {
-			"outscaled": [
-				{
-					"id": "outscaled.workspaces",
-					"name": "%workspaces.title%"
-				}
-			]
-		},
-		"viewsWelcome": [
-			{
-				"view": "outscaled.workspaces",
-				"contents": "%workspaces.welcome%",
-				"when": "!outscaled.hasWorkspaces"
-			}
-		],
 		"commands": [
-			{
-				"command": "outscaled.workspaces.refresh",
-				"title": "%workspaces.refresh%",
-				"icon": "$(refresh)"
-			},
 			{
 				"command": "outscaled.switchWorkspace",
 				"title": "%workspaces.switch%"
@@ -85,20 +56,6 @@
 			}
 		],
 		"menus": {
-			"view/title": [
-				{
-					"command": "outscaled.workspaces.refresh",
-					"when": "view == outscaled.workspaces",
-					"group": "navigation"
-				}
-			],
-			"view/item/context": [
-				{
-					"command": "outscaled.openGrid",
-					"when": "view == outscaled.workspaces && viewItem == outscaled.workspace",
-					"group": "outscaled"
-				}
-			],
 			"commandPalette": [
 				{
 					"command": "outscaled.focusTerminal",

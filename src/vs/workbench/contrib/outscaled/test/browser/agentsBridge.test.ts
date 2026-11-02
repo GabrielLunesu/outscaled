@@ -18,7 +18,7 @@ suite('Outscaled - Agents Bridge', () => {
 		strictEqual(isAgentsReceipt({ version: 1, ok: true, panes: [{ workspace: 'demo', terminal: 'a', visible: true, processId: 42 }] }), true);
 	});
 	test('rejects wrong versions, malformed launches, duplicate identities and dangling membership', () => {
-		for (const value of [null, {}, { ...snapshot, version: 2 }, { ...snapshot, workspaces: [snapshot.workspaces[0], snapshot.workspaces[0]] },
+		for (const value of [null, {}, { ...snapshot, version: 2 }, { ...snapshot, workspaces: [{ ...snapshot.workspaces[0], path: 42 }] }, { ...snapshot, workspaces: [snapshot.workspaces[0], snapshot.workspaces[0]] },
 			{ ...snapshot, workspaces: [{ ...snapshot.workspaces[0], layout: presetLayout('single', ['missing']) }] },
 			{ ...snapshot, workspaces: [{ ...snapshot.workspaces[0], terminals: [{ ...snapshot.workspaces[0].terminals[0], launch: { executable: 123 } }] }] },
 			{ ...snapshot, workspaces: [{ ...snapshot.workspaces[0], terminals: [{ ...snapshot.workspaces[0].terminals[0], runtime: { toString: 1 } }] }] },

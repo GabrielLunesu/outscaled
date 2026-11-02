@@ -30,7 +30,7 @@ export function agentsSnapshot(servers: readonly ServerState[], selected: Select
 			layout = last ? splitPane(layout, last, terminal.id, 'right') : presetLayout('single', [terminal.id]);
 			placed.add(terminal.id);
 		}}
-		return { id, name: workspace.slug, server: server.host, root, selected: !!selected && id === workspaceKey(selected), online: server.online,
+		return { id, name: workspace.slug, server: server.host, root, path: workspace.path, selected: !!selected && id === workspaceKey(selected), online: server.online,
 			branch: branches.get(id), layout, terminals: terminals.map(terminal => ({ id: terminal.id, name: terminal.name,
 				runtime: terminal.runtime === 'claude-code' || terminal.runtime === 'codex' ? terminal.runtime : 'shell', status: tabStatus(terminal),
 				...(executable && terminal.state === 'running' ? { launch: { executable, args: attachArgs(server.host, workspace.slug, terminal.name), env } } : {}) })) };

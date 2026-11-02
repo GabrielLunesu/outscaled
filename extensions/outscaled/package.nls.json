@@ -1,10 +1,6 @@
 {
 	"displayName": "Outscaled",
 	"description": "Workspaces and agent terminals on machines you own.",
-	"container.title": "Outscaled",
-	"workspaces.title": "Workspaces",
-	"workspaces.welcome": "No workspaces found. Start wsd locally or add SSH hosts to your Outscaled servers.toml.",
-	"workspaces.refresh": "Refresh Workspaces",
 	"workspaces.switch": "Switch Outscaled Workspace",
 	"grid.open": "Outscaled: Open Grid…",
 	"grid.focusTerminal": "Outscaled: Focus Terminal",
