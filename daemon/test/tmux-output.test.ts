@@ -69,6 +69,7 @@ function observe(panes: TmuxPane[], status: TerminalStatus = "starting") {
   // No tmux process or real agent: feed the supervisor per-pane format results.
   tmux.listPanes = async () => { polls++; return panes.map(pane => ({ ...pane })); };
   tmux.sendKeys = async () => {};
+  tmux.captureScreen = async () => "";
   for (const [index, pane] of panes.entries()) {
     state.insertTerminal({
       ...terminal, id: `codex-${index}`, name: `x${index + 1}`, session: pane.name,

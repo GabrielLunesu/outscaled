@@ -37,7 +37,8 @@ in that startup wrapper and use `bun src/ws.ts health` from `daemon/`.
 | `ws new <slug> --repo <url>` | Clone a repo into a new workspace |
 | `ws new <slug> --path <dir>` | Register an existing folder in place; nothing is copied, moved or written |
 | `ws term open <workspace> --name <name> [--cmd <command>] [--always-on]` | Start a terminal as tmux session `ws-<workspace>-<name>` in the workspace folder; without `--cmd` it opens your login shell |
-| `ws term ls <workspace>` | List terminals with process state and agent status (`-` for shells); `--json` includes runtime, status and `statusChangedAt` |
+| `ws term ls <workspace>` | List terminals with process state and agent status (`-` for shells); `--json` includes runtime, status, `statusChangedAt`, `request` and `latestLine` |
+| `ws answer <workspace> <name> allow\|deny [--on <server>]` | Answer a captured Claude permission prompt with the current exact Yes or No option |
 | `ws attach <workspace> <name> [--on <server>]` | Attach the current terminal to a running wsd terminal locally or over SSH; no `--json` |
 | `ws run ls <workspace>` | List runs, newest first: agent, status, start time, exit code and run id; accepts `--json` |
 | `ws run log <run-id>` | Print the run's combined stdout and stderr |
@@ -113,7 +114,7 @@ See the [Codex hooks guide](https://learn.chatgpt.com/docs/hooks#review-and-trus
 
 Agent status starts at `starting` and is independent of process state. An
 always-on agent returns to `starting` when respawned; exited and crashed agents
-retain their last status. Every status change emits `terminal.status`.
+retain their last status. Every status or waiting-request change emits `terminal.status`.
 
 The hook command is local-only and takes no `--on` or `--json` options. It does
 nothing outside wsd terminals and gives up after about a second if wsd is down.
@@ -131,9 +132,10 @@ Each text frame contains one JSON object validated by the protocol package's
 | --- | --- |
 | `terminal.status`, `agent.needs_input`, `agent.crashed`, `run.started`, `run.finished` | The stored `Event` object, including `id`, `workspace`, `terminal`, `payload`, `time` and `acked`; sent after persistence commits |
 | `workspace.changed` | `{type: "workspace.changed", workspace: "demo"}` when a workspace is created, a terminal opens, or a terminal's process state changes (including shell exits and agent restarts) |
+| `terminal.latest_line` | `{type: "terminal.latest_line", workspace, terminal, payload: {latestLine}}`, at most once per terminal per second |
 | `server.health` | `{type: "server.health", payload: <Health>}` every 15 seconds, using the same body as `GET /v1/health` |
 
-The last two types are live-only and never enter the events table. On
+The last three types are live-only and never enter the events table. On
 `workspace.changed`, refetch that workspace's terminals (and the workspace list
 if the slug is new). Connect the socket before fetching current state over HTTP,
 and reconcile notifications received during that fetch. Repeat this on reconnect:
@@ -467,3 +469,52 @@ to the short hostname. The SQLite database is `state.db` inside the state direct
 | `WSD_TMUX_SOCKET` | unset (default tmux socket) | unset (default tmux socket) |
 
 Use absolute directory paths.
+
+## Waiting requests, latest lines and permission answers
+
+Terminal records (both GET terminal lists and `ws term ls --json`) include:
+
+- `request`: null outside `needs_input`; otherwise `{message, permission}`.
+  `message` is the Claude Notification hook's text, or null. `permission` is
+  `{question, options: [{number, label}]}` read from the visible screen, or null
+  until a recognised permission prompt is drawn. A late screen updates the
+  request without changing `statusChangedAt` or repeating `agent.needs_input`.
+  `terminal.status` payloads include `request`, including null when cleared.
+- `latestLine`: a trimmed single line, at most 200 characters, or null. Claude
+  hooks read only the final 256 KiB of `transcript_path` JSONL and use the newest
+  completed assistant text entry there, ignoring tool/thinking records and
+  partial lines. Codex turn-complete notify uses `last-assistant-message`.
+  Until agent text is available, and for shells, wsd samples the visible pane's
+  last non-blank line after output at most once per second. Once agent text is
+  available it takes precedence over subsequent screen redraws.
+
+Latest-line changes emit the live-only message
+`{type: "terminal.latest_line", workspace, terminal, payload: {latestLine}}`.
+Each terminal emits at most once per second, coalescing bursts into a trailing
+update with its newest line. These messages are not saved in the events table;
+use the same connect-then-fetch/reconnect flow as other live-only messages.
+
+`POST /v1/workspaces/:ws/terminals/:name/answer` takes
+`{answer: "allow_once" | "deny"}` and returns
+`{question, option: {number, label}}`. The CLI equivalent is:
+
+```sh
+ws answer demo agent allow --on example-alias
+ws answer demo agent deny --on example-alias
+```
+
+Omit `--on` to use the local daemon. Only a running Claude Code terminal in
+`needs_input` can be answered. wsd captures its current visible screen (never
+scrollback) and requires a `Do you want …?` question, single-digit numbered options and the
+`Esc to cancel` footer. Allow Once sends only the number labelled exactly `Yes`;
+Deny sends only the number labelled exactly `No`. A saved fingerprint also
+covers the tool context above the question, so even a different Bash command
+with identical options is rejected. An answer consumes the request and sets
+`working`; later hooks set the final status. Unknown terminals return 404.
+Non-running/non-waiting terminals, other runtimes, trust screens, missing or
+changed prompts and unrecognised layouts return 409 with a reason and receive
+no keys. Invalid bodies return 400. If a prompt was not captured yet, open the
+terminal to review it. Tmux capture and key delivery are separate operations;
+the lifecycle lock prevents daemon operations from intervening, but cannot
+freeze an independently changing agent or an attached human client between
+capture and key delivery.

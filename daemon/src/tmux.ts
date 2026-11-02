@@ -65,6 +65,10 @@ export class Tmux {
     if (keys.length) await this.run(["send-keys", "-t", pane, ...keys]);
   }
 
+  async captureScreen(pane: string): Promise<string> {
+    return this.run(["capture-pane", "-p", "-J", "-t", pane], undefined, false);
+  }
+
   async captureOutput(pane: string, lines: number): Promise<string> {
     const output = await this.run(["capture-pane", "-p", "-J", "-t", pane, "-S", "-"], undefined, false);
     // Keep leading whitespace and whitespace on nonblank lines intact.

@@ -81,6 +81,7 @@ export class Supervisor {
     const ids = new Set(terminals.map(t => t.id));
     for (const id of this.watches.keys()) if (!ids.has(id)) this.watches.delete(id);
     for (const id of this.outputWatches.keys()) if (!ids.has(id)) this.outputWatches.delete(id);
+    this.terminals.forgetScreens(ids);
     if (!terminals.length) return;
     const panes = new Map((await this.tmux.listPanes()).map(pane => [pane.name, pane]));
     for (const terminal of terminals) {
@@ -99,6 +100,7 @@ export class Supervisor {
         else if (pane.dead) this.state.updateTerminalState(terminal.id, { state: "exited", pid: null });
         if (terminal.runtime === "codex" && !pane.dead) this.inspectOutput(this.state.getTerminal(terminal.id)!, pane);
         else this.outputWatches.delete(terminal.id);
+        await this.terminals.refreshScreen(this.state.getTerminal(terminal.id)!, pane);
       } catch (error) {
         console.error(`wsd: supervising ${terminal.session} failed`, error);
       }

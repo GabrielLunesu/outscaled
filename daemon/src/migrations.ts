@@ -64,6 +64,10 @@ const migrations = [
     terminal TEXT NOT NULL,
     PRIMARY KEY (workspace, agent)
   );`,
+  `ALTER TABLE terminals ADD COLUMN request TEXT CHECK (request IS NULL OR json_valid(request));
+  ALTER TABLE terminals ADD COLUMN requestScreenHash TEXT;
+  ALTER TABLE terminals ADD COLUMN latestLine TEXT;
+  ALTER TABLE terminals ADD COLUMN latestLineFromAgent INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 export function migrate(db: Database): void {

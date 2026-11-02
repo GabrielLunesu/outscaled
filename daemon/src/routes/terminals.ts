@@ -1,4 +1,4 @@
-import { OpenTerminalRequest, Slug, TerminalInputRequest, TerminalOutputLines } from "@outscaled/protocol";
+import { OpenTerminalRequest, Slug, TerminalInputRequest, TerminalAnswerRequest, TerminalOutputLines } from "@outscaled/protocol";
 import type { RouteContext } from "../context";
 import { apiError, validateBody } from "../http";
 import { TerminalConflict, TerminalNotFound } from "../terminals";
@@ -8,14 +8,19 @@ export function createTerminalsRoute(context: RouteContext) {
   return async (request: Request): Promise<Response | undefined> => {
     const url = new URL(request.url);
     const path = url.pathname;
-    const pane = /^\/v1\/workspaces\/([^/]+)\/terminals\/([^/]+)\/(input|output)$/.exec(path);
-    if (pane && ((pane[3] === "input" && request.method === "POST") || (pane[3] === "output" && request.method === "GET"))) {
+    const pane = /^\/v1\/workspaces\/([^/]+)\/terminals\/([^/]+)\/(input|output|answer)$/.exec(path);
+    if (pane && (((pane[3] === "input" || pane[3] === "answer") && request.method === "POST") || (pane[3] === "output" && request.method === "GET"))) {
       const workspace = pane[1]!;
       const name = pane[2]!;
       if (!Slug.safeParse(workspace).success || !Slug.safeParse(name).success) {
         return apiError(400, "invalid_request", "Invalid workspace or terminal name");
       }
       try {
+        if (pane[3] === "answer") {
+          const body = await validateBody(request, TerminalAnswerRequest);
+          if (body instanceof Response) return body;
+          return Response.json(await terminals.answer(workspace, name, body));
+        }
         if (pane[3] === "input") {
           const body = await validateBody(request, TerminalInputRequest);
           if (body instanceof Response) return body;
