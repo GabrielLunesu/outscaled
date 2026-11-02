@@ -39,70 +39,29 @@ their actual `file://` folder; VPS roots use `ws://<host>/<slug>/`. VS Code may
 normalize away that trailing slash. The selected workspace is persisted and
 marked in the sidebar.
 
-Clean file editors from the previous workspace close and are remembered by host
-and slug, including their editor group and which tab was active. Switching back
-reopens them. Dirty editors stay open without an automatic save. Editor memory
-is stored in extension workspace state. `WorkspaceSelection` in
-`src/workspaces/selection.ts` exposes the current selection and
-`onDidChangeSelectedWorkspace`, carrying the previous and current workspace for
-terminal-grid consumers.
+Core preserves Code editors and editor-group layout in native VS Code working sets, keyed by workspace. Switching roots and switching Agents / Code use one serialized core path. Dirty editors keep VS Code's normal protection.
 
 The filesystem provider supports stat, list, read and write through `/v1/fs`.
 Daemon failures become the corresponding VS Code filesystem errors. Watching is
 a no-op; mkdir, delete and rename report that wsd does not support them yet.
 
-## Terminal grids (Phase 3, items 4–5)
+## Agents view (Phase 4, item 1)
 
-Run **Outscaled: Open Grid…** in a selected workspace, or use its workspace
-context menu. The built-ins are **2 Claude + 2 Codex**, **1 Claude + shell**,
-and shells in each of six layouts: single, side by side, stacked, 2×2, four
-across, and two stacked with a full-height pane on the right. Presets and fill
-order live in `src/grid/presets.ts`. Panes fill left to right, then top to bottom;
-the full-height right pane in 2+1 fills last.
+The regular workbench opens in Agents mode. One core editor fills the main area with native terminal panes. The existing workspace tree remains the sidebar; Code mode shows the native Explorer and restores its editors and tabs. Agents mode hides tabs and editor title actions. The title control replaces the command center with the selected workspace and available local Git branch, **New agents**, a cross-workspace needs-you count, and **Agents / Code**. Layout controls are disabled. Chat and workbench chrome removal are a separate contribution.
 
-Each native editor terminal runs `ws attach <workspace> <name>`, adding
-`--on <host>` for a VPS. Set **outscaled.wsPath** to an executable path if needed;
-otherwise the extension searches PATH, `~/.local/bin`, `/opt/homebrew/bin`, then
-`/usr/local/bin`. `~/` paths are supported. `WSD_PORT` and `WSD_TMUX_SOCKET` pass
-through to attach clients when set. Agents launch through the shared
-`DaemonService`; a fresh terminal-list request reuses an already running name,
-including a concurrent create from another client. Numbering is per command,
-so the default uses `claude-1`, `claude-2`, `codex-1`, `codex-2`.
+**Outscaled: Open Grid…** and **New agents** open the existing preset picker. The built-ins are **2 Claude + 2 Codex**, **1 Claude + shell**, and shells in six layouts: single, side by side, stacked, 2×2, four across, and two stacked with a full-height pane on the right. Presets fill left to right, then top to bottom; the full-height right pane in 2+1 fills last. Layouts are split trees defined in `src/vs/workbench/contrib/outscaled/common/agentsLayout.ts`, with an insertion operation for later pane menus.
 
-Closing a tab detaches its client; the daemon session keeps running. Opening the
-preset again reuses those sessions. Clicking a sidebar terminal focuses its
-existing client, or attaches in the active editor group after switching to that
-workspace. Attach clients are transient so VS Code does not restore them on its
-own. The initial switch into the dedicated window can reload; explicit grid or
-terminal opens resume after that reload.
+Each pane has an agent name, runtime badge, and live status: grey idle, green working, red needs you, or a red cross for crashed. Waiting panes have a red outline. Native terminal command routing, keyboard input, copy/paste, select all, find, clear, links, and the terminal context menu use VS Code's existing terminal services and contributions. A small core subclass of the native terminal editor service redirects reveal/focus calls for owned panes back to Agents, while ordinary terminals use the upstream implementation.
 
-`TerminalGrid.memory` exposes `GridMemory` (`src/grid/memory.ts`), with a durable
-snapshot in workspace state under `outscaled.workspaceGrids`. Each host/slug
-entry records the actual editor layout (including sizes), optional preset id,
-and pane names, commands, daemon terminal ids and view columns. Tab objects bind
-owned attach clients to their editor groups; manual moves and closes update the
-snapshot. Group/tab events capture changes, with a deduplicated local layout
-poll to catch sash resizes and a final flush on extension deactivation.
+Core owns attach clients in a long-lived owner per workspace. Hiding the editor, switching roots or modes, and closing Code editors do not dispose or reattach them. Changing presets changes placement while retaining existing clients. Explicit terminal kill commands detach the client; daemon sessions remain daemon-owned. A daemon membership removal disposes the corresponding client. New daemon-created terminals join the grid; terminals omitted by a replacement preset remain retained for later views. Background-strip UI is a later checklist item.
 
-Before a root switch, the extension snapshots and closes the outgoing workspace's
-attach clients through `Terminal.dispose()`, bypassing editor-terminal kill
-confirmations without changing `terminal.integrated.confirmOnKill`. It waits for
-their tabs to disappear before setting the next layout. If tab removal stalls
-for three seconds, it logs an error and continues the switch. After switching it
-sets the remembered layout and reattaches the incoming panes before reopening
-file editors. The same selected grid restores automatically after a window reload, from workspace state in that Outscaled
-window. No core grid patch or window/extension-host reload is needed for switches.
-Restore only lists daemon terminals and attaches running original ids; missing,
-exited, crashed, restarting or replaced terminals are omitted, leaving any empty
-groups in the saved layout. It never creates agents. A failed daemon request
-leaves the remembered grid available for the next switch/reload instead of
-replacing it with an empty snapshot.
+Panes run `ws attach <workspace> <name>`, adding `--on <host>` for VPS workspaces. Set **outscaled.wsPath** if needed; otherwise the extension searches PATH, `~/.local/bin`, `/opt/homebrew/bin`, and `/usr/local/bin`. `WSD_PORT` and `WSD_TMUX_SOCKET` pass through when set. A fresh terminal-list request reuses running daemon terminals, including a concurrent create from another client. Transient clients are rebuilt after a window reload from persisted grid membership, attaching the original daemon ids and tmux sessions without launching agents again.
 
-Live client process ids map to daemon terminal ids. Shared daemon updates apply
-only changed tab statuses through `_outscaled.setTerminalStatus`: starting and
-working agents show a green spinner, idle agents and shells a grey dot,
-permission/input requests a red dot, and crashed terminals a red cross. Exited
-terminals show idle. No extra stream or SSH tunnel is opened for status.
+### Internal bridge
+
+`common/agentsBridge.ts` is the shared, dependency-free version 1 contract, imported by core and bundled into the extension. `_outscaled.agents.publish` sends workspace identity, root, selection, connectivity, optional branch, layout tree, terminal state, and launch descriptors. Core returns a receipt with client process ids and visibility. `_outscaled.agents.inspect` reads current visibility for notification suppression. `_outscaled.agents.request` asks the extension to switch workspace, open the preset picker, or focus a daemon terminal by identity. Invalid versions or payloads are logged and return an error receipt; they cannot reach view construction. Core never connects to a daemon or starts an SSH tunnel.
+
+`GridMemory` stores validated split trees and known daemon identities in workspace state under `outscaled.agentsGrids.v1`. It reconciles immutable terminal ids, leaving empty slots for removed terminals, and never matches a replacement session by name. Preset and focus requests await a fresh membership snapshot through the existing connection, so a snapshot started before terminal creation cannot remove a new attach client. Per-workspace Code working sets and mode use core's `outscaled.workspaceModes.v1` storage. The initial entry into the dedicated Outscaled window may reload once; pending preset/focus requests resume afterwards.
 
 ## Needs-you notifications (Phase 3, item 6)
 
@@ -127,21 +86,4 @@ Build the fixture daemon if `daemon/dist/wsd` is absent:
 scripts/serial.sh node extensions/outscaled/test/ui.mts
 ```
 
-The Playwright check uses throwaway profiles, config, registered local files,
-remote files, two isolated daemons, tmux sockets and fake SSH. It checks remote
-editing/saving, native local roots, editor restoration, dirty-editor retention,
-selection after an explicit reload, and renderer/extension-host/tunnel survival
-during switches. It also checks the sidebar's live status behavior, a real
-attached 2×2 grid, live terminal tab colours, session reuse and sidebar terminal focus. It switches
-between a local 2×2 agent grid and a remote side-by-side Claude/shell grid,
-verifies a typed marker and the same daemon identities after restoration, proves
-renderer/extension-host/tunnel survival, then reloads and checks the selected
-grid restores automatically. It also verifies manual cross-group moves, closed
-panes and omission of an exited daemon terminal. The harness retains the default
-`confirmOnKill` setting, waits for VS Code to detect every attach client's child
-process, verifies live child PIDs before switches, and fails if detach requests a
-native termination confirmation. Explicit user closes are confirmed by the
-test-only native-dialog observer. Fake Claude and Codex executables print
-recognisable output and wait; attach clients use the built `daemon/dist/ws`.
-The notification scenarios first simulate an OS-toast click, then remove the test interception and exercise the real core command with workspace B selected and the workbench window blurred (disabling Playwright focus emulation so the host observes native focus). They assert an informational Dock bounce without stealing focus, one in-app warning with **Focus**, and restoration of workspace A with terminal keyboard focus after clicking it. Native OS-toast display and click delivery remain outside the hermetic check. Screenshots `26-fallback-background.png` and `27-fallback-focus-terminal.png` and `notification-fallback-proof.json` record this fallback. Screenshots, `switch-proof.json` and grid proof records go to `.agent-validation/grid` (or the first argument). Processes and temporary
-state are cleaned up on success and failure.
+The Playwright acceptance check uses a throwaway profile, config, private `WSD_PORT` and `WSD_TMUX_SOCKET`, and fake Claude/Codex executables that echo typed input. It verifies pane headers, status hooks and needs-you routing across workspaces, native paste/find, unchanged terminal instances and attach process ids after closing Code editors, preserved tmux output, two workspace grids after reload, and all six layout geometries. A private SSH double also verifies `ws attach --on`, input and Code-mode file reads for a VPS workspace, without contacting a real SSH host or the daemon on port 7770. It saves screenshots and proof records to the supplied directory, then stops the app, daemon and private tmux server and removes fixture state. Use `UI_INSPECT_LAUNCH=1` to pause after each launch screenshot for visual inspection; create `launch-inspected` in the evidence directory to continue.

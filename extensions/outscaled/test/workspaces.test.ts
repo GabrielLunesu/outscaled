@@ -8,7 +8,6 @@ import { test } from 'node:test';
 import * as vscode from 'vscode';
 import { containsUri, placeholder, sameRoot, workspaceAddress, workspaceUri } from '../src/workspaces/uri';
 import { daemonFileError, fileType, WorkspaceFileSystem } from '../src/workspaces/fileSystem';
-import { EditorMemory } from '../src/workspaces/editorMemory';
 import { WorkspaceSelection } from '../src/workspaces/selection';
 import { hostAuthority } from '../src/daemon/servers';
 
@@ -22,7 +21,7 @@ test('workspace URIs round-trip SSH targets and decoded path segments exactly on
 	assert.equal(workspaceAddress(vscode.Uri.parse('ws://host/demo')).path, '');
 	assert.ok(sameRoot('ws://host/demo/', 'ws://host/demo'));
 	assert.ok(!sameRoot(undefined, undefined));
-	for (const path of ['../secret', 'foo//bar', 'foo/./bar', 'foo\\bar', 'nul\0']) assert.throws(() => workspaceUri('host', 'demo', path));
+	for (const path of ['../secret', 'foo//bar', 'foo/./bar', 'foo\\bar', 'nul\0']) { assert.throws(() => workspaceUri('host', 'demo', path)); }
 	for (const uri of ['file:///demo', 'ws://host/', 'ws://host/demo/a?query', 'ws://host/demo/a#fragment', 'ws://host/demo/%2e%2e/secret']) {
 		assert.throws(() => workspaceAddress(vscode.Uri.parse(uri)));
 	}
@@ -88,25 +87,6 @@ test('placeholder is empty and read-only; unsupported operations explain the lim
 	provider.watch().dispose();
 });
 
-test('editor memory isolates same-slug workspaces by host, replaces snapshots and persists', () => {
-	const a = { host: 'local', slug: 'demo', root: 'file:///test/demo' };
-	const b = { host: 'remote', slug: 'demo', root: 'ws://remote/demo/' };
-	const memory = new EditorMemory();
-	const first = [{ uri: a.root + '/a', viewColumn: 1, active: false }, { uri: a.root + '/dirty', viewColumn: 2, active: true }];
-	memory.remember(a, first);
-	memory.remember(b, [{ uri: b.root + 'b', original: b.root + 'before', viewColumn: 1, active: true }]);
-	first.pop(); // Caller mutations cannot change memory.
-	assert.equal(memory.recall(a).length, 2);
-	memory.recall(a).pop();
-	assert.equal(memory.recall(a).length, 2);
-	const restored = new EditorMemory(memory.serialize());
-	assert.deepEqual(restored.recall(b), memory.recall(b));
-	assert.equal(restored.recall(a).length, 2);
-	restored.remember(a, []); // Closing every editor must clear the snapshot.
-	assert.deepEqual(restored.recall(a), []);
-	assert.equal(restored.recall(b).length, 1);
-});
-
 test('selection event exposes previous and current workspace for terminal grid consumers', () => {
 	const a = { host: 'local', slug: 'demo', root: 'file:///test/demo' };
 	const b = { host: 'remote', slug: 'demo', root: 'ws://remote/demo/' };
@@ -120,14 +100,14 @@ test('selection event exposes previous and current workspace for terminal grid c
 });
 
 
-test('switch barriers await snapshot/detach before selection and restoration before resolving', async () => {
+test('switch barriers await view preparation before selection and restoration before resolving', async () => {
 	const a = { host: 'local', slug: 'a', root: 'file:///test/a' };
 	const b = { host: 'remote', slug: 'b', root: 'ws://remote/b/' };
 	const selection = new WorkspaceSelection(a);
 	const order: string[] = [];
 	selection.onWillChangeSelectedWorkspace(event => {
 		assert.deepEqual(selection.current, a);
-		event.waitUntil(Promise.resolve().then(() => { order.push('record/detach'); }));
+		event.waitUntil(Promise.resolve().then(() => { order.push('prepare-view'); }));
 	});
 	selection.onDidChangeSelectedWorkspace(event => {
 		assert.deepEqual(selection.current, b);
@@ -135,6 +115,6 @@ test('switch barriers await snapshot/detach before selection and restoration bef
 	});
 	await selection.prepare(b); order.push('root switch');
 	await selection.select(b); order.push('editors');
-	assert.deepEqual(order, ['record/detach', 'root switch', 'restore', 'editors']);
+	assert.deepEqual(order, ['prepare-view', 'root switch', 'restore', 'editors']);
 	selection.dispose();
 });

@@ -9,60 +9,15 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Terminal } from '@outscaled/protocol';
-import { EventEmitter } from 'vscode';
-import { detachPanes } from '../src/grid/detach';
-import { layouts, presets, expandPreset, EditorGroupLayout } from '../src/grid/presets';
+import { presets, expandPreset } from '../src/grid/presets';
 import { ensureTerminal } from '../src/grid/daemonTerminals';
 import { findWsPath, attachArgs, attachEnv } from '../src/grid/wsPath';
-import { tabStatus, TabStatusChanges } from '../src/grid/status';
-import { GridMemory, recordGrid, restorePlan } from '../src/grid/memory';
-
-// Interpret the public editor-layout contract into physical rectangles, without
-// assuming that columns and reading order coincide for arbitrary nested layouts.
-function rectangles(layout: EditorGroupLayout): number[][] {
-	const result: number[][] = [];
-	const visit = (groups: EditorGroupLayout['groups'], orientation: number, x: number, y: number, w: number, h: number) => {
-		groups.forEach((group, index) => {
-			const box = orientation === 0 ? [x + w * index / groups.length, y, w / groups.length, h]
-				: [x, y + h * index / groups.length, w, h / groups.length];
-			if (group.groups) visit(group.groups, 1 - orientation, box[0], box[1], box[2], box[3]);
-			else result.push(box);
-		});
-	};
-	visit(layout.groups, layout.orientation ?? 0, 0, 0, 1, 1);
-	return result;
-}
-test('six layouts have the required geometry and fill left to right, then top to bottom', () => {
-	const expected = [
-		[[0, 0, 1, 1]],
-		[[0, 0, .5, 1], [.5, 0, .5, 1]],
-		[[0, 0, 1, .5], [0, .5, 1, .5]],
-		[[0, 0, .5, .5], [.5, 0, .5, .5], [0, .5, .5, .5], [.5, .5, .5, .5]],
-		[[0, 0, .25, 1], [.25, 0, .25, 1], [.5, 0, .25, 1], [.75, 0, .25, 1]],
-		[[0, 0, .5, .5], [0, .5, .5, .5], [.5, 0, .5, 1]]
-	];
-	assert.equal(layouts.length, 6);
-	for (const [index, layout] of layouts.entries()) {
-		const boxes = rectangles(layout.editor);
-		assert.deepEqual(layout.columns.map(column => boxes[column - 1]), expected[index]);
-	}
-});
-
-test('presets expand stable per-command names, commands, and pane assignments', () => {
-	assert.deepEqual(expandPreset(presets[0]).panes, [
-		{ name: 'claude-1', command: 'claude', viewColumn: 1 }, { name: 'claude-2', command: 'claude', viewColumn: 2 },
-		{ name: 'codex-1', command: 'codex', viewColumn: 3 }, { name: 'codex-2', command: 'codex', viewColumn: 4 }
-	]);
-	assert.deepEqual(expandPreset(presets[1]).panes, [{ name: 'claude-1', command: 'claude', viewColumn: 1 }, { name: 'shell-1', viewColumn: 2 }]);
-	assert.equal(presets.length, 8);
-	for (const preset of presets.slice(2)) {
-		const { layout, panes } = expandPreset(preset);
-		assert.equal(panes.length, layout.columns.length);
-		assert.deepEqual(panes.map(pane => pane.name), panes.map((_, index) => `shell-${index + 1}`));
-		assert.ok(panes.every(pane => pane.command === undefined));
-	}
-	assert.throws(() => expandPreset({ id: 'bad', label: 'bad', layout: '2x2', commands: ['shell'] }));
-});
+import { tabStatus } from '../src/grid/status';
+import { GridMemory } from '../src/grid/memory';
+import { agentsSnapshot } from '../src/grid/mapping';
+import type { ServerState } from '../src/daemon/state';
+import { isAgentsSnapshot } from '../../../src/vs/workbench/contrib/outscaled/common/agentsBridge.js';
+import { layoutTerminals, presetLayout } from '../../../src/vs/workbench/contrib/outscaled/common/agentsLayout.js';
 
 const terminal = Terminal.parse({ id: 'agent-id', workspace: 'demo', name: 'claude-1', command: 'claude', session: 'ws-demo-claude-1',
 	alwaysOn: false, state: 'running', runtime: 'claude-code', status: 'idle', statusChangedAt: '2026-01-01T00:00:00.000Z', restarts: 0, pid: 123,
@@ -78,7 +33,7 @@ test('reuse running names regardless of command, restart exited names, and resol
 		assert.equal((await ensureTerminal(service, workspace, { name: terminal.name, command: 'codex' })).id, terminal.id);
 		assert.equal(calls.length, state === 'running' ? 1 : 2);
 		assert.equal(calls[0].host, 'local'); assert.equal(calls[0].path, 'workspaces/demo/terminals');
-		if (calls[1]) assert.deepEqual(JSON.parse(calls[1].init!.body as string), { name: 'claude-1', command: 'codex' });
+		if (calls[1]) {assert.deepEqual(JSON.parse(calls[1].init!.body as string), { name: 'claude-1', command: 'codex' });}
 	}
 	const responses = [Response.json([]), new Response(null, { status: 409 }), Response.json([terminal])];
 	assert.equal((await ensureTerminal({ request: async () => responses.shift()! }, workspace, { name: terminal.name })).id, terminal.id);
@@ -100,7 +55,7 @@ test('ws lookup honors explicit paths, PATH order, Dock fallbacks and executable
 		assert.equal(await findWsPath('~/.local/bin/ws', env, root), join(local, 'ws'));
 		assert.equal(await findWsPath('ws', env, root), join(bin, 'ws'));
 		assert.equal(await findWsPath('', { PATH: '/usr/bin:/bin' }, root), join(local, 'ws'));
-		for (const setting of [bin, join(root, 'no-exec'), join(root, 'missing')]) await assert.rejects(findWsPath(setting, env, root), /outscaled.wsPath/);
+		for (const setting of [bin, join(root, 'no-exec'), join(root, 'missing')]) {await assert.rejects(findWsPath(setting, env, root), /outscaled.wsPath/);}
 		for (const fallback of ['/opt/homebrew/bin/ws', '/usr/local/bin/ws']) {
 			assert.equal(await findWsPath(undefined, {}, root, async path => path === fallback), fallback);
 		}
@@ -112,158 +67,58 @@ test('ws lookup honors explicit paths, PATH order, Dock fallbacks and executable
 	assert.deepEqual(attachEnv({}), {});
 });
 
-test('tab status prioritizes process exits, maps agents, and sends only acknowledged changes', async () => {
-	for (const [status, expected] of [['starting', 'working'], ['working', 'working'], ['idle', 'idle'], ['needs_input', 'needs_input']] as const) {
-		assert.equal(tabStatus({ ...terminal, status }), expected);
-		assert.equal(tabStatus({ ...terminal, status, runtime: null }), 'idle');
-		assert.equal(tabStatus({ ...terminal, status, state: 'exited' }), 'idle');
-		assert.equal(tabStatus({ ...terminal, status, state: 'crashed' }), 'crashed');
-	}
-	const changes = new TabStatusChanges();
-	const calls: unknown[] = [];
-	const send = async (request: unknown) => { calls.push(request); return true; };
-	await changes.update(1, terminal, send);
-	await changes.update(1, terminal, send);
-	await changes.update(1, { ...terminal, status: 'starting' }, send);
-	await changes.update(1, { ...terminal, status: 'working' }, send);
-	await changes.update(1, { ...terminal, status: 'needs_input' }, send);
-	await changes.update(2, terminal, send);
-	assert.deepEqual(calls, [{ processId: 1, status: 'idle' }, { processId: 1, status: 'working' }, { processId: 1, status: 'needs_input' }, { processId: 2, status: 'idle' }]);
-	changes.forget(1);
-	await changes.update(1, terminal, async () => false);
-	await changes.update(1, terminal, send);
-	assert.equal(calls.length, 5, 'failed core updates can be retried, and closing clears cached PIDs');
+test('pane statuses prioritize process exits and map agent runtime states', () => {
+	assert.deepEqual(['idle', 'working', 'starting', 'needs_input'].map(status => tabStatus({ ...terminal, status } as typeof terminal)), ['idle', 'working', 'working', 'needs_input']);
+	assert.deepEqual(['exited', 'crashed'].map(state => tabStatus({ ...terminal, state } as typeof terminal)), ['idle', 'crashed']);
 });
 
-test('grid memory persists layout, daemon identity and group by workspace without live handles', () => {
+test('presets assign stable per-runtime names in fill order', () => {
+	assert.deepEqual(expandPreset(presets[0]).panes, [
+		{ name: 'claude-1', command: 'claude' }, { name: 'claude-2', command: 'claude' },
+		{ name: 'codex-1', command: 'codex' }, { name: 'codex-2', command: 'codex' }
+	]);
+	assert.equal(presets.length, 8);
+	assert.throws(() => expandPreset({ id: 'bad', label: 'bad', layout: '2x2', commands: ['shell'] }));
+});
+
+test('mapping isolates workspaces, statuses and local/VPS attach descriptors', () => {
 	const memory = new GridMemory();
-	const { layout, panes } = expandPreset(presets[0]);
-	memory.remember(workspace, { layout: layout.editor, preset: presets[0].id, panes: panes.map((pane, index) => ({ ...pane, terminalId: `id-${index}` })) });
-	memory.remember({ ...workspace, host: 'example-alias' }, { layout: layouts[0].editor, panes: [] });
+	const servers = ['local', 'example-alias'].map(host => ({ host, online: true, workspaces: [{ slug: 'demo', path: '/test/demo' }],
+		terminals: [terminal, { ...terminal, id: 'other', workspace: 'other' }] })) as ServerState[];
+	const snapshot = agentsSnapshot(servers, { ...workspace, root: 'file:///test/demo' }, memory, '/test/ws', { WSD_PORT: '12345' });
+	assert.ok(isAgentsSnapshot(snapshot));
+	assert.deepEqual(snapshot.workspaces.map(workspace => ({ selected: workspace.selected, terminals: workspace.terminals.map(terminal => terminal.id),
+		args: workspace.terminals[0].launch?.args })), [
+		{ selected: true, terminals: ['agent-id'], args: ['attach', 'demo', 'claude-1'] },
+		{ selected: false, terminals: ['agent-id'], args: ['attach', 'demo', 'claude-1', '--on', 'example-alias'] }
+	]);
+});
+
+test('grid memory retains topology and only reconciles original daemon identities', () => {
+	const memory = new GridMemory();
+	memory.remember(workspace, presetLayout('2x2', ['one', 'two', 'three', 'four']));
 	const restored = new GridMemory(memory.serialize());
-	assert.equal(restored.recall(workspace)!.panes.length, 4);
-	assert.equal(restored.recall({ ...workspace, host: 'example-alias' })!.panes.length, 0);
-	restored.recall(workspace)!.panes.pop();
-	assert.equal(restored.recall(workspace)!.panes[3].terminalId, 'id-3');
+	assert.deepEqual(layoutTerminals(restored.reconcile(workspace, new Set(['one', 'three', 'replacement']))!), ['one', 'three']);
+	assert.deepEqual(layoutTerminals(memory.recall(workspace)!), ['one', 'two', 'three', 'four']);
+	assert.equal(new GridMemory({ bad: {} } as never).recall(workspace), undefined);
 });
 
 
-test('record actual groups, tab order, moved panes and closed panes without including unrelated tabs', () => {
-	const a = {}, b = {}, closed = {}, text = {}, unrelatedTerminal = {};
-	const layout = { orientation: 0 as const, groups: [{ size: .3 }, { size: .7 }] };
-	const panes = [a, b, closed].map((tab, index) => ({ tab, pane: { name: `pane-${index}`, terminalId: `id-${index}`, viewColumn: index + 1 } }));
-	const grid = recordGrid(layout, [
-		{ viewColumn: 1, tabs: [text, unrelatedTerminal] },
-		{ viewColumn: 2, tabs: [b, a] }
-	], panes);
-	assert.deepEqual(grid, { layout, preset: undefined, panes: [
-		{ name: 'pane-1', terminalId: 'id-1', viewColumn: 2 },
-		{ name: 'pane-0', terminalId: 'id-0', viewColumn: 2 }
-	] });
-	layout.groups[0].size = .5;
-	assert.equal(grid.layout.groups[0].size, .3);
-	assert.deepEqual(recordGrid(layout, [{ viewColumn: 1, tabs: [] }], panes).panes, []);
-});
-
-test('restore plan keeps layout and only original running daemon sessions; never replaces missing or exited agents', () => {
-	const panes = ['running', 'missing', 'exited', 'crashed', 'restarting', 'replaced'].map((name, index) =>
-		({ name, command: 'codex', terminalId: `id-${index}`, viewColumn: index % 4 + 1 }));
-	const grid = { layout: layouts[3].editor, preset: presets[0].id, panes };
-	const terminals = panes.filter(pane => pane.name !== 'missing').map(pane => ({ ...terminal, name: pane.name,
-		id: pane.name === 'replaced' ? 'new-id' : pane.terminalId,
-		state: (['exited', 'crashed', 'restarting'].includes(pane.name) ? pane.name : 'running') as Terminal['state'] }));
-	const plan = restorePlan(grid, terminals);
-	assert.deepEqual(plan, { ...grid, panes: [panes[0]] });
-	assert.deepEqual(restorePlan(grid, []).panes, []);
-	plan.layout.groups.pop(); plan.panes[0].viewColumn = 9;
-	assert.equal(grid.layout.groups.length, 2); assert.equal(grid.panes[0].viewColumn, 1);
-});
-
-test('recorded grids survive JSON persistence including resized nested layout, multiple tabs and empty grids', () => {
+test('same-slug grids remain isolated by server after persistence', () => {
 	const memory = new GridMemory();
-	const a = {}, b = {};
-	const layout = { orientation: 1 as const, groups: [{ size: .4, groups: [{ size: .2 }, { size: .8 }] }, { size: .6 }] };
-	const grid = recordGrid(layout, [{ viewColumn: 2, tabs: [a, b] }], [a, b].map((tab, index) =>
-		({ tab, pane: { name: `codex-${index}`, command: 'codex', terminalId: `session-${index}`, viewColumn: 1 } })));
-	memory.remember(workspace, grid);
-	memory.remember({ ...workspace, host: 'remote' }, { layout: layouts[1].editor, panes: [] });
-	const serialized = JSON.parse(JSON.stringify(memory.serialize()));
-	const restored = new GridMemory(serialized);
-	assert.deepEqual(restored.recall(workspace), JSON.parse(JSON.stringify(grid)));
-	assert.deepEqual(restored.recall({ ...workspace, host: 'remote' })!.panes, []);
-	assert.equal(restored.recall({ ...workspace, slug: 'unknown' }), undefined);
+	memory.remember(workspace, presetLayout('single', ['local-id']));
+	memory.remember({ ...workspace, host: 'example-alias' }, presetLayout('stacked', ['remote-a', 'remote-b']));
+	const restored = new GridMemory(memory.serialize());
+	assert.deepEqual([layoutTerminals(restored.recall(workspace)!), layoutTerminals(restored.recall({ ...workspace, host: 'example-alias' })!)], [['local-id'], ['remote-a', 'remote-b']]);
 });
 
 
-function detachTabs(tabs: object[]) {
-	const changes = new EventEmitter<void>();
-	const groupChanges = new EventEmitter<void>();
-	let listeners = 0;
-	const listen = (emitter: EventEmitter<void>, listener: () => void) => {
-		listeners++;
-		const subscription = emitter.event(listener);
-		return { dispose() { listeners--; subscription.dispose(); } };
-	};
-	const groups = { all: [{ tabs }],
-		onDidChangeTabs: (listener: () => void) => listen(changes, listener),
-		onDidChangeTabGroups: (listener: () => void) => listen(groupChanges, listener) };
-	return { groups, changes, groupChanges, listeners: () => listeners };
-}
-
-test('detach disposes every client before waiting for async tab removal and leaves unrelated tabs alone', async () => {
-	const a = {}, b = {}, unrelated = {};
-	const fixture = detachTabs([a, b, unrelated]);
-	const disposed: object[] = [];
-	const messages: string[] = [];
-	let settled = false;
-	const detached = detachPanes([a, b].map(tab => ({ tab, terminal: { dispose() { disposed.push(tab); } } })),
-		fixture.groups, message => messages.push(message)).then(() => { settled = true; });
-	assert.deepEqual(disposed, [a, b]);
-	await Promise.resolve(); assert.equal(settled, false);
-	fixture.groups.all[0].tabs = [b, unrelated]; fixture.changes.fire();
-	await Promise.resolve(); assert.equal(settled, false);
-	fixture.groups.all = [{ tabs: [unrelated] }]; fixture.groupChanges.fire();
-	await detached;
-	assert.deepEqual(messages, []); assert.equal(fixture.listeners(), 0);
-	assert.deepEqual(fixture.groups.all[0].tabs, [unrelated]);
-});
-
-test('detach handles already absent and synchronously removed tabs without missing events', async () => {
-	const tab = {}, absent = {};
-	const fixture = detachTabs([tab]);
-	let disposed = 0;
-	await detachPanes([
-		{ tab, terminal: { dispose() { disposed++; fixture.groups.all[0].tabs = []; fixture.changes.fire(); } } },
-		{ tab: absent, terminal: { dispose() { disposed++; } } },
-		{ terminal: { dispose() { disposed++; } } }
-	], fixture.groups, () => assert.fail('no detach errors expected'));
-	assert.equal(disposed, 3); assert.equal(fixture.listeners(), 0);
-});
-
-test('detach timeout logs and releases the switch queue; late events cannot block later detaches', async () => {
-	const tab = {};
-	const fixture = detachTabs([tab]);
-	const messages: string[] = [];
-	const order: string[] = [];
-	await detachPanes([{ tab, terminal: { dispose() { order.push('dispose'); } } }], fixture.groups,
-		message => messages.push(message), 20).then(() => { order.push('next switch'); });
-	assert.deepEqual(order, ['dispose', 'next switch']);
-	assert.match(messages[0], /Error: Terminal grid detach timed out.*1 tabs remain.*continuing workspace switch/);
-	assert.equal(messages.length, 1); assert.equal(fixture.listeners(), 0);
-	fixture.changes.fire(); fixture.groupChanges.fire();
-	await detachPanes([{ tab, terminal: { dispose() { fixture.groups.all[0].tabs = []; fixture.changes.fire(); } } }],
-		fixture.groups, message => messages.push(message));
-	assert.equal(messages.length, 1); assert.equal(fixture.listeners(), 0);
-});
-
-test('a broken terminal disposal does not prevent disposing the other clients or releasing the queue', async () => {
-	const fixture = detachTabs([]);
-	const messages: string[] = [];
-	let disposed = false;
-	await detachPanes([
-		{ terminal: { dispose() { throw new Error('client failed'); } } },
-		{ terminal: { dispose() { disposed = true; } } }
-	], fixture.groups, message => messages.push(message));
-	assert.equal(disposed, true); assert.match(messages[0], /Error: Could not dispose terminal client.*client failed/);
-	assert.equal(fixture.listeners(), 0);
+test('crashed daemon identities retain grid membership without launching an attach client', () => {
+	const memory = new GridMemory();
+	memory.remember(workspace, presetLayout('single', [terminal.id]));
+	const server = { host: 'local', online: true, workspaces: [{ slug: 'demo', path: '/test/demo' }], terminals: [{ ...terminal, state: 'crashed' }] } as ServerState;
+	const snapshot = agentsSnapshot([server], undefined, memory, '/test/ws', {});
+	assert.ok(isAgentsSnapshot(snapshot));
+	assert.deepEqual({ status: snapshot.workspaces[0].terminals[0].status, launch: snapshot.workspaces[0].terminals[0].launch, ids: layoutTerminals(snapshot.workspaces[0].layout) },
+		{ status: 'crashed', launch: undefined, ids: [terminal.id] });
 });

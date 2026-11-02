@@ -4,263 +4,145 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as vscode from 'vscode';
-import type { Terminal as DaemonTerminal } from '@outscaled/protocol';
+import { agentsInspectCommand, agentsPublishCommand, agentsRequestCommand, AgentsReceipt, isAgentsReceipt, isAgentsRequest } from '../../../../src/vs/workbench/contrib/outscaled/common/agentsBridge.js';
+import { layoutTerminals, presetLayout, splitPane } from '../../../../src/vs/workbench/contrib/outscaled/common/agentsLayout.js';
 import { DaemonService } from '../daemon/service';
 import { WorkspaceSelection } from '../workspaces/selection';
-import { WorkspaceLocation } from '../workspaces/uri';
-import { workspaceKey } from '../workspaces/editorMemory';
+import { containsUri, WorkspaceLocation } from '../workspaces/uri';
+import { workspaceKey } from '../workspaces/identity';
 import { ensureTerminal, listTerminals } from './daemonTerminals';
-import { detachPanes } from './detach';
-import { GridMemory, gridMemoryKey, RememberedGrid, RememberedPane, recordGrid, restorePlan } from './memory';
-import { EditorGroupLayout, expandPreset, GridPane, presets } from './presets';
-import { TabStatusChanges } from './status';
-import { attachArgs, attachEnv, findWsPath } from './wsPath';
+import { GridMemory, gridMemoryKey } from './memory';
+import { expandPreset, presets } from './presets';
+import { attachEnv, findWsPath } from './wsPath';
+import { agentsSnapshot } from './mapping';
+
+/** Read-only subset of the built-in Git extension's v1 API. */
+interface GitExtension { enabled: boolean; getAPI(version: 1): { repositories: readonly { rootUri: vscode.Uri; state: { HEAD: { name?: string } | undefined } }[] } }
 
 const pendingKey = 'outscaled.pendingGridOpen';
-type OpenRequest = { workspace: WorkspaceLocation; preset: string } | { workspace: WorkspaceLocation; name: string };
-interface LivePane { workspace: WorkspaceLocation; terminalId: string; terminal: vscode.Terminal; processId?: number; closed: boolean; pane: RememberedPane; tab?: vscode.Tab; excludedTabs: ReadonlySet<vscode.Tab>; }
+type OpenRequest = { kind: 'preset'; workspace: WorkspaceLocation; preset: string } | { kind: 'focus'; workspace: WorkspaceLocation; name: string };
 
-/** Owns attach clients only. wsd owns their lifetime and survives client disposal. */
+/** Extension-owned daemon operations; core alone owns the live terminal clients. */
 export class TerminalGrid implements vscode.Disposable {
 	readonly memory: GridMemory;
-	private readonly panes = new Set<LivePane>();
-	private readonly statuses = new TabStatusChanges();
-	private statusQueue = Promise.resolve();
 	private queue = Promise.resolve();
 	private stopped = false;
-	private changing = false;
-	private canRecord = false;
-	private snapshotTimer?: NodeJS.Timeout;
-	private readonly layoutTimer: NodeJS.Timeout;
-	private readonly subscriptions: vscode.Disposable[];
+	private executable?: string;
+	private receipt?: AgentsReceipt;
+	private readonly subscriptions: vscode.Disposable[] = [];
 
 	constructor(private readonly context: vscode.ExtensionContext, private readonly service: DaemonService,
 		private readonly selection: WorkspaceSelection, private readonly log: (message: string) => void) {
-		this.memory = new GridMemory(context.workspaceState.get<Record<string, RememberedGrid>>(gridMemoryKey));
-		this.subscriptions = [service.onDidChange(() => this.updateStatuses()), vscode.window.onDidCloseTerminal(terminal => {
-			for (const pane of this.panes) if (pane.terminal === terminal) this.remove(pane);
-			this.scheduleSnapshot();
-		}), selection.onWillChangeSelectedWorkspace(event => {
-			event.waitUntil(this.enqueue(async () => {
-				this.changing = true;
-				if (event.previous) await this.record(event.previous);
-				await this.detach();
-				this.canRecord = false;
+		this.memory = new GridMemory(context.workspaceState.get(gridMemoryKey));
+		this.subscriptions.push(selection.onWillChangeSelectedWorkspace(event => { event.waitUntil(this.enqueue(() => this.publish(undefined, event.current))); }),
+			service.onDidChange(() => { void this.enqueue(() => this.publish()); }),
+			selection.onDidChangeSelectedWorkspace(event => { event.waitUntil(this.enqueue(() => this.publish())); }),
+			vscode.commands.registerCommand('outscaled.openGrid', async (node?: { server: { host: string }; workspace: { slug: string } }) => {
+				try {
+					const workspace = node ? { host: node.server.host, slug: node.workspace.slug } : this.selection.current;
+					if (!workspace) { await vscode.commands.executeCommand('outscaled.switchWorkspace'); return; }
+					const choice = await vscode.window.showQuickPick(presets.map(preset => ({ label: vscode.l10n.t(preset.label), preset })), { placeHolder: vscode.l10n.t('Open a terminal grid') });
+					if (choice) {await this.open({ kind: 'preset', workspace, preset: choice.preset.id });}
+				} catch (error) { this.report(error); }
+			}),
+			vscode.commands.registerCommand('outscaled.focusTerminal', (workspace: WorkspaceLocation, name: string) => this.open({ kind: 'focus', workspace, name }).catch(error => this.report(error))),
+			vscode.commands.registerCommand(agentsRequestCommand, async (value: unknown): Promise<AgentsReceipt> => {
+				if (!isAgentsRequest(value)) { this.log('Invalid agents bridge request'); return { version: 1, ok: false, error: 'Invalid request' }; }
+				try {
+					if (value.action === 'newAgents') {await vscode.commands.executeCommand('outscaled.openGrid');}
+					else {
+						const snapshot = this.snapshot();
+						const workspace = snapshot.workspaces.find(workspace => workspace.id === value.workspace);
+						if (!workspace) {throw new Error(vscode.l10n.t('Workspace is unavailable'));}
+						const location = { host: workspace.server, slug: workspace.name };
+						if (value.action === 'switch') {await vscode.commands.executeCommand('outscaled.switchWorkspace', location);}
+						else {
+							const terminal = workspace.terminals.find(terminal => terminal.id === value.terminal);
+							if (!terminal) {throw new Error(vscode.l10n.t('Terminal is unavailable'));}
+							await this.open({ kind: 'focus', workspace: location, name: terminal.name });
+						}
+					}
+					return { version: 1, ok: true };
+				} catch (error) { this.log(String(error)); return { version: 1, ok: false, error: String(error) }; }
 			}));
-		}), selection.onDidChangeSelectedWorkspace(event => {
-			event.waitUntil(this.enqueue(async () => {
-				try { await this.restore(event.current); this.canRecord = true; } finally { this.changing = false; }
-			}));
-		}), vscode.window.tabGroups.onDidChangeTabs(() => {
-			this.bindMovedTabs();
-			this.scheduleSnapshot();
-		}), vscode.window.tabGroups.onDidChangeTabGroups(() => { this.bindMovedTabs(); this.scheduleSnapshot(); }), vscode.commands.registerCommand('outscaled.openGrid', (node?: { server: { host: string }; workspace: { slug: string } }) => (async () => {
-			const workspace = node ? { host: node.server.host, slug: node.workspace.slug } : this.selection.current;
-			if (!workspace) throw new Error('Select an Outscaled workspace first.');
-			const preset = await vscode.window.showQuickPick(presets.map(preset => ({ label: preset.label, preset })), {
-				placeHolder: vscode.l10n.t('Open a terminal grid')
-			});
-			if (preset) await this.open({ workspace, preset: preset.preset.id });
-		})().catch(error => this.report(error))), vscode.commands.registerCommand('outscaled.focusTerminal', (workspace: WorkspaceLocation, name: string) =>
-			this.open({ workspace, name }).catch(error => this.report(error)))];
-		// Local layout polling also captures sash resizes (the tabs API has no resize
-		// event). Writes are deduplicated, and every switch takes a fresh snapshot.
-		this.layoutTimer = setInterval(() => this.scheduleSnapshot(), 1000);
-		// Transient clients are never restored by VS Code itself.
 		void this.enqueue(async () => {
-			this.changing = true;
-			try {
-				const pending = context.globalState.get<OpenRequest>(pendingKey);
-				if (pending && workspaceKey(pending.workspace) === (selection.current && workspaceKey(selection.current))) {
-					await context.globalState.update(pendingKey, undefined);
-					await this.perform(pending);
-				} else if (selection.current) {
-					await this.restore(selection.current);
-				}
-				this.canRecord = true;
-			} finally { this.changing = false; }
+			try { this.executable = await findWsPath(vscode.workspace.getConfiguration('outscaled').get<string>('wsPath')); }
+			catch (error) { this.log(String(error)); }
+			await this.publish();
 		});
+		const pending = context.globalState.get<OpenRequest>(pendingKey);
+		if (pending && selection.current && workspaceKey(pending.workspace) === workspaceKey(selection.current)) {
+			void context.globalState.update(pendingKey, undefined).then(() => this.open(pending));
+		}
 	}
 
+	private snapshot(selected = this.selection.current) {
+		const branches = new Map<string, string>();
+		const git = vscode.extensions.getExtension<GitExtension>('vscode.git');
+		if (git?.isActive && git.exports.enabled) {
+			for (const server of this.service.servers.filter(server => server.host === 'local')) {
+				for (const workspace of server.workspaces) {
+					const repository = git.exports.getAPI(1).repositories.find(repository => containsUri(repository.rootUri, vscode.Uri.file(workspace.path)));
+					if (repository?.state.HEAD?.name) { branches.set(workspaceKey({ host: server.host, slug: workspace.slug }), repository.state.HEAD.name); }
+				}
+			}
+		}
+
+		return agentsSnapshot(this.service.servers, selected, this.memory, this.executable, attachEnv(), branches);
+	}
 	private enqueue(action: () => Promise<void>): Promise<void> {
-		const result = this.queue.then(async () => { if (!this.stopped) await action(); });
-		this.queue = result.catch(error => this.report(error));
-		return this.queue;
+		const result = this.queue.then(async () => { if (!this.stopped) {await action();} });
+		this.queue = result.catch(error => this.log(String(error)));
+		return result;
 	}
-
-	/** Read-only attach-client lookup; daemon identity also works across workspace switches. */
-	findPane(host: string, terminalId: string): Readonly<LivePane> | undefined {
-		return [...this.panes].find(pane => !pane.closed && pane.workspace.host === host && pane.terminalId === terminalId);
+	private async publish(focus?: { workspace: string; terminal: string }, selected = this.selection.current): Promise<void> {
+		const snapshot = { ...this.snapshot(selected), focus };
+		for (const workspace of snapshot.workspaces) {this.memory.remember({ host: workspace.server, slug: workspace.name }, workspace.layout, workspace.terminals.map(terminal => terminal.id));}
+		await this.context.workspaceState.update(gridMemoryKey, this.memory.serialize());
+		const receipt = await vscode.commands.executeCommand<unknown>(agentsPublishCommand, snapshot);
+		if (!isAgentsReceipt(receipt)) { this.log('Invalid agents bridge receipt'); return; }
+		if (!receipt.ok) { this.log(receipt.error ?? 'Agents bridge rejected snapshot'); return; }
+		this.receipt = receipt;
 	}
-
 	private async open(request: OpenRequest): Promise<void> {
 		if (!this.selection.current || workspaceKey(this.selection.current) !== workspaceKey(request.workspace)) {
 			await this.context.globalState.update(pendingKey, request);
 			await vscode.commands.executeCommand('outscaled.switchWorkspace', request.workspace);
-			if (!this.selection.current || workspaceKey(this.selection.current) !== workspaceKey(request.workspace)) return;
+			if (!this.selection.current || workspaceKey(this.selection.current) !== workspaceKey(request.workspace)) {return;}
 			await this.context.globalState.update(pendingKey, undefined);
 		}
 		await this.enqueue(async () => {
-			this.changing = true;
-			try {
-				if (this.selection.current && workspaceKey(this.selection.current) === workspaceKey(request.workspace)) {
-					await this.perform(request);
-					this.canRecord = true;
+			this.executable = await findWsPath(vscode.workspace.getConfiguration('outscaled').get<string>('wsPath'));
+			let focus: string | undefined;
+			if (request.kind === 'preset') {
+				const preset = presets.find(preset => preset.id === request.preset);
+				if (!preset) {throw new Error(vscode.l10n.t('Unknown grid preset'));}
+				const { panes } = expandPreset(preset);
+				const ids: string[] = [];
+				for (const pane of panes) {ids.push((await ensureTerminal(this.service, request.workspace, pane)).id);}
+				this.memory.remember(request.workspace, presetLayout(preset.layout, ids), (await listTerminals(this.service, request.workspace)).map(terminal => terminal.id));
+				focus = ids[0];
+			} else {
+				focus = (await listTerminals(this.service, request.workspace)).find(terminal => terminal.name === request.name)?.id;
+				if (!focus) {throw new Error(vscode.l10n.t('This terminal is unavailable'));}
+				const tree = this.memory.recall(request.workspace);
+				if (!tree) {this.memory.remember(request.workspace, presetLayout('single', [focus]));}
+				else if (!layoutTerminals(tree).includes(focus)) {
+					const last = layoutTerminals(tree).at(-1);
+					this.memory.remember(request.workspace, last ? splitPane(tree, last, focus, 'right') : presetLayout('single', [focus]));
 				}
-			} finally { this.changing = false; }
+			}
+			await this.service.synchronize(request.workspace.host);
+			await this.publish(focus ? { workspace: workspaceKey(request.workspace), terminal: focus } : undefined);
 		});
 	}
-
-	private async perform(request: OpenRequest): Promise<void> {
-		const workspace = request.workspace;
-		if ('name' in request) {
-			const existing = [...this.panes].find(pane => workspaceKey(pane.workspace) === workspaceKey(workspace) && pane.pane.name === request.name);
-			if (existing) { existing.terminal.show(); return; }
-		}
-		// Resolve before launching agents or changing the editor layout.
-		const ws = await findWsPath(vscode.workspace.getConfiguration('outscaled').get<string>('wsPath'));
-		if ('preset' in request) {
-			const preset = presets.find(preset => preset.id === request.preset);
-			if (!preset) throw new Error('Unknown grid preset');
-			const { layout, panes } = expandPreset(preset);
-			const terminals: DaemonTerminal[] = [];
-			for (const pane of panes) terminals.push(await ensureTerminal(this.service, workspace, pane));
-			await this.detach();
-			await vscode.commands.executeCommand('vscode.setEditorLayout', layout.editor);
-			this.memory.remember(workspace, { layout: layout.editor, preset: preset.id,
-				panes: panes.map((pane, index) => ({ ...pane, terminalId: terminals[index].id })) });
-			await this.save();
-			for (const [index, pane] of panes.entries()) await this.attach(workspace, pane, terminals[index], ws);
-		} else {
-			const response = await this.service.request(workspace.host, `workspaces/${encodeURIComponent(workspace.slug)}/terminals`);
-			if (!response.ok) throw new Error(`Could not list terminals (HTTP ${response.status})`);
-			const terminal = (await response.json() as DaemonTerminal[]).find(terminal => terminal.name === request.name);
-			if (!terminal || terminal.state !== 'running') throw new Error('This terminal is not running.');
-			const viewColumn = vscode.window.tabGroups.activeTabGroup.viewColumn;
-			const pane = { name: terminal.name, command: terminal.command, viewColumn, terminalId: terminal.id };
-			const previous = this.memory.recall(workspace);
-			const layout = await vscode.commands.executeCommand<EditorGroupLayout>('vscode.getEditorLayout');
-			this.memory.remember(workspace, { layout: layout ?? { orientation: 0, groups: [{}] },
-				panes: [...(previous?.panes.filter(pane => pane.name !== terminal.name) ?? []), pane] });
-			await this.save();
-			await this.attach(workspace, pane, terminal, ws);
-		}
+	async findPane(host: string, terminalId: string) {
+		const receipt = await vscode.commands.executeCommand<unknown>(agentsInspectCommand);
+		if (isAgentsReceipt(receipt) && receipt.ok) {this.receipt = receipt;}
+		const workspaces = new Set(this.service.servers.filter(server => server.host === host).flatMap(server => server.workspaces.map(workspace => workspaceKey({ host, slug: workspace.slug }))));
+		return this.receipt?.panes?.find(pane => workspaces.has(pane.workspace) && pane.terminal === terminalId);
 	}
-
-	private async attach(workspace: WorkspaceLocation, pane: GridPane, daemon: DaemonTerminal, ws: string): Promise<void> {
-		// TabInputTerminal has no terminal id. Bind the newly opened tab while
-		// attaching sequentially, then retain its object rather than matching labels
-		// in snapshots. On cross-group moves VS Code replaces that tab object.
-		const before = new Set(vscode.window.tabGroups.all.flatMap(group => group.tabs));
-		let resolve!: (tab: vscode.Tab) => void;
-		let reject!: (error: Error) => void;
-		const opened = new Promise<vscode.Tab>((yes, no) => { resolve = yes; reject = no; });
-		const check = () => {
-			const tab = vscode.window.tabGroups.all.flatMap(group => group.tabs).find(tab =>
-				!before.has(tab) && tab.input instanceof vscode.TabInputTerminal && tab.label === pane.name);
-			if (tab) resolve(tab);
-		};
-		const subscriptions = [vscode.window.tabGroups.onDidChangeTabs(check), vscode.window.tabGroups.onDidChangeTabGroups(check)];
-		const timer = setTimeout(() => reject(new Error(`Terminal tab did not open: ${pane.name}`)), 10000);
-		const terminal = vscode.window.createTerminal({ name: pane.name, shellPath: ws,
-			shellArgs: attachArgs(workspace.host, workspace.slug, pane.name), env: attachEnv(),
-			isTransient: true, location: { viewColumn: pane.viewColumn } });
-		const live: LivePane = { workspace, terminalId: daemon.id, terminal, closed: false, excludedTabs: before, pane: { ...pane, terminalId: daemon.id } };
-		this.panes.add(live);
-		terminal.show();
-		void terminal.processId.then(processId => {
-			if (live.closed || this.stopped) return;
-			live.processId = processId;
-			this.updateStatuses();
-		}, error => this.log(`Terminal process: ${String(error)}`));
-		try { live.tab = await opened; }
-		finally { clearTimeout(timer); for (const subscription of subscriptions) subscription.dispose(); }
-	}
-
-	private bindMovedTabs(): void {
-		const tabs = new Set(vscode.window.tabGroups.all.flatMap(group => group.tabs));
-		const bound = new Set([...this.panes].map(pane => pane.tab));
-		for (const pane of this.panes) if (pane.tab && !tabs.has(pane.tab)) {
-			const replacement = [...tabs].find(tab => !bound.has(tab) && !pane.excludedTabs.has(tab) && tab.input instanceof vscode.TabInputTerminal && tab.label === pane.terminal.name);
-			if (replacement) { pane.tab = replacement; bound.add(replacement); }
-		}
-	}
-
-	private report(error: unknown): void {
-		this.log(String(error));
-		void vscode.window.showErrorMessage(`Outscaled: ${String(error)}`);
-	}
-
-	private scheduleSnapshot(): void {
-		if (this.changing || this.stopped || !this.selection.current) return;
-		clearTimeout(this.snapshotTimer);
-		this.snapshotTimer = setTimeout(() => {
-			void this.enqueue(async () => {
-				if (!this.changing && this.selection.current) await this.record(this.selection.current);
-			});
-		}, 100);
-	}
-
-	private async record(workspace: WorkspaceLocation): Promise<void> {
-		if (!this.canRecord) return;
-		this.bindMovedTabs();
-		const previous = this.memory.recall(workspace);
-		const panes = [...this.panes].filter(pane => workspaceKey(pane.workspace) === workspaceKey(workspace));
-		if (!previous && !panes.length) return;
-		const layout = await vscode.commands.executeCommand<EditorGroupLayout>('vscode.getEditorLayout');
-		if (!layout) return;
-		const grid = recordGrid(layout, vscode.window.tabGroups.all, panes, previous?.preset);
-		if (JSON.stringify(grid) === JSON.stringify(previous)) return;
-		this.memory.remember(workspace, grid);
-		await this.save();
-	}
-
-	private async detach(): Promise<void> {
-		const panes = [...this.panes];
-		for (const pane of panes) this.remove(pane);
-		await detachPanes(panes, vscode.window.tabGroups, this.log);
-	}
-
-	private async restore(workspace: WorkspaceLocation): Promise<void> {
-		const remembered = this.memory.recall(workspace);
-		if (!remembered) return;
-		this.changing = true;
-		const terminals = await listTerminals(this.service, workspace);
-		const plan = restorePlan(remembered, terminals);
-		const ws = plan.panes.length ? await findWsPath(vscode.workspace.getConfiguration('outscaled').get<string>('wsPath')) : '';
-		await vscode.commands.executeCommand('vscode.setEditorLayout', plan.layout);
-		for (const pane of plan.panes) await this.attach(workspace, pane, terminals.find(terminal => terminal.id === pane.terminalId)!, ws);
-		this.memory.remember(workspace, plan);
-		await this.save();
-	}
-
-	/** Flush sash changes before an intentional extension-host shutdown/reload. */
-	async flush(): Promise<void> {
-		await this.queue;
-		if (!this.changing && this.selection.current) await this.record(this.selection.current);
-	}
-
-	private updateStatuses(): void {
-		this.statusQueue = this.statusQueue.then(async () => {
-			if (this.stopped) return;
-			for (const pane of this.panes) {
-				const terminal = this.service.servers.find(server => server.host === pane.workspace.host)?.terminals.find(terminal => terminal.id === pane.terminalId);
-				if (!pane.closed && pane.processId && terminal) await this.statuses.update(pane.processId, terminal,
-					request => vscode.commands.executeCommand<boolean>('_outscaled.setTerminalStatus', request));
-			}
-		}).catch(error => this.log(`Terminal status: ${String(error)}`));
-	}
-	private save(): Thenable<void> { return this.context.workspaceState.update(gridMemoryKey, this.memory.serialize()); }
-	private remove(pane: LivePane): void {
-		pane.closed = true;
-		this.panes.delete(pane);
-		if (pane.processId) this.statuses.forget(pane.processId);
-	}
-	dispose(): void {
-		this.stopped = true;
-		clearInterval(this.layoutTimer);
-		clearTimeout(this.snapshotTimer);
-		for (const subscription of this.subscriptions) subscription.dispose();
-		for (const pane of this.panes) this.remove(pane);
-	}
+	private report(error: unknown): void { this.log(String(error)); void vscode.window.showErrorMessage(vscode.l10n.t('Outscaled: {0}', String(error))); }
+	async flush(): Promise<void> { await this.queue; }
+	dispose(): void { this.stopped = true; for (const subscription of this.subscriptions) {subscription.dispose();} }
 }

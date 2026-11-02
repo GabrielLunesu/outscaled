@@ -6,10 +6,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Terminal } from '@outscaled/protocol';
-import { TerminalNotifications, paneVisible, registerNotifications } from '../src/notifications';
+import type * as vscode from 'vscode';
+import type { DaemonService } from '../src/daemon/service';
+import type { AgentsSnapshot } from '../../../src/vs/workbench/contrib/outscaled/common/agentsBridge.js';
+import type { WorkspaceLocation } from '../src/workspaces/uri';
+import { TerminalNotifications, registerNotifications } from '../src/notifications';
 import { TerminalGrid } from '../src/grid/controller';
 import { WorkspaceSelection } from '../src/workspaces/selection';
-import { EventEmitter, TabInputTerminal, calls, commands, handlers, settings, window } from './notificationsVscode';
+import { EventEmitter, calls, commands, handlers, settings, window } from './notificationsVscode';
 import type { ServerState } from '../src/daemon/state';
 
 const terminal = () => Terminal.parse({ id: 'agent-id', workspace: 'demo', name: 'claude-1', command: 'claude', session: 'ws-demo-claude-1',
@@ -63,25 +67,25 @@ test('startup, reconnect, added-server snapshots and offline mutations establish
 	for (const kind of ['needs_input', 'crashed'] as const) {
 		const f = fixture();
 		const server = f.service.servers[0], agent = server.terminals[0];
-		if (kind === 'crashed') agent.state = kind; else agent.status = kind;
+		if (kind === 'crashed') {agent.state = kind;} else {agent.status = kind;}
 		const notifications = new TerminalNotifications(f.service, f.host);
 		f.fire(); assert.equal(f.requests.length, 0); assert.equal(f.messages.length, 0);
 		server.online = false; f.fire();
 		agent.state = 'running'; agent.status = 'idle'; f.fire();
-		if (kind === 'crashed') agent.state = kind; else agent.status = kind;
+		if (kind === 'crashed') {agent.state = kind;} else {agent.status = kind;}
 		server.online = true; f.fire(); f.fire();
 		assert.equal(f.requests.length, 0); assert.equal(f.messages.length, 0);
 		f.service.servers.push({ ...server, host: 'another-example' }); f.fire();
 		assert.equal(f.requests.length, 0); assert.equal(f.messages.length, 0);
 		agent.state = 'running'; agent.status = 'idle'; f.fire();
-		if (kind === 'crashed') agent.state = kind; else agent.status = kind;
+		if (kind === 'crashed') {agent.state = kind;} else {agent.status = kind;}
 		f.fire(); assert.equal(f.requests.length, 2);
 		notifications.dispose();
 	}
 });
 
 test('suppress only when focused AND visible; disabled or suppressed transitions are consumed', () => {
-	for (const enabled of [false, true]) for (const focused of [false, true]) for (const visible of [false, true]) {
+	for (const enabled of [false, true]) {for (const focused of [false, true]) {for (const visible of [false, true]) {
 		const f = fixture(); f.enabled = enabled; f.windowFocused = focused; f.visible = visible;
 		const notifications = new TerminalNotifications(f.service, f.host);
 		f.service.servers[0].terminals[0].status = 'needs_input'; f.fire();
@@ -91,20 +95,7 @@ test('suppress only when focused AND visible; disabled or suppressed transitions
 		assert.equal(f.requests.length, enabled && !(focused && visible) ? 1 : 0);
 		assert.equal(f.messages.length, f.requests.length);
 		notifications.dispose();
-	}
-});
-
-test('visibility requires the workspace and the bound tab active in any group', () => {
-	const workspace = { host: 'local', slug: 'demo' };
-	const tab = { input: new TabInputTerminal(), label: 'claude-1' } as any;
-	const groups = [{ activeTab: tab }] as any;
-	assert.equal(paneVisible(workspace, workspace, tab, groups), true);
-	assert.equal(paneVisible(workspace, { ...workspace, host: 'example-alias' }, tab, groups), false);
-	assert.equal(paneVisible(workspace, { ...workspace, slug: 'other' }, tab, groups), false);
-	assert.equal(paneVisible(workspace, undefined, tab, groups), false);
-	assert.equal(paneVisible(workspace, workspace, undefined, groups), false);
-	assert.equal(paneVisible(workspace, workspace, { ...tab }, groups), false, 'same label is not the owned tab');
-	assert.equal(paneVisible(workspace, workspace, tab, [{ activeTab: undefined }] as any), false);
+	}}}
 });
 
 test('pending toasts do not block each other; only clicks route; stale/disposed clicks and command errors are handled', async () => {
@@ -116,19 +107,19 @@ test('pending toasts do not block each other; only clicks route; stale/disposed 
 	resolve({ shown: true, clicked: true }); await settle();
 	assert.deepEqual(f.focused, [[{ host: 'local', slug: 'demo' }, 'claude-1'], [{ host: 'example-alias', slug: 'demo' }, 'claude-1']]);
 	notifications.dispose();
-	for (const surface of ['toast', 'message']) for (const stale of ['removed', 'offline', 'disposed', 'dismissed', 'error']) {
+	for (const surface of ['toast', 'message']) {for (const stale of ['removed', 'offline', 'disposed', 'dismissed', 'error']) {
 		const f = fixture(); let resolve!: (value: any) => void, reject!: (error: Error) => void;
 		const result = new Promise<any>((yes, no) => { resolve = yes; reject = no; });
-		if (surface === 'toast') f.result = result; else f.messageResult = result;
+		if (surface === 'toast') {f.result = result;} else {f.messageResult = result;}
 		const notifications = new TerminalNotifications(f.service, f.host);
 		f.service.servers[0].terminals[0].status = 'needs_input'; f.fire();
-		if (stale === 'removed') f.service.servers[0].terminals = [];
-		if (stale === 'offline') f.service.servers[0].online = false;
-		if (stale === 'disposed') notifications.dispose();
-		if (stale === 'error') reject(new Error('unsupported')); else resolve(surface === 'toast' ? { shown: stale !== 'dismissed', clicked: stale !== 'dismissed' } : stale !== 'dismissed');
+		if (stale === 'removed') {f.service.servers[0].terminals = [];}
+		if (stale === 'offline') {f.service.servers[0].online = false;}
+		if (stale === 'disposed') {notifications.dispose();}
+		if (stale === 'error') {reject(new Error('unsupported'));} else {resolve(surface === 'toast' ? { shown: stale !== 'dismissed', clicked: stale !== 'dismissed' } : stale !== 'dismissed');}
 		await settle(); assert.equal(f.focused.length, 0);
 		assert.equal(f.errors.length, stale === 'error' ? 1 : 0); notifications.dispose();
-	}
+	}}
 });
 
 test('in-app Focus works while the OS toast remains pending or rejects', async () => {
@@ -146,65 +137,31 @@ test('in-app Focus works while the OS toast remains pending or rejects', async (
 	}
 });
 
-test('registered clicks switch and restore before focus/open; findPane follows disposal and restored identity', async () => {
-	for (const surface of ['toast', 'message']) for (const mode of ['existing', 'open', 'switch', 'restore']) for (const crashed of mode === 'existing' ? [false, true] : [false]) {
-		calls.length = 0; handlers.clear(); settings.clear(); window.tabGroups.all = []; window.state.focused = false;
+test('bridge publishes a focus request after switching for both notification surfaces', async () => {
+	for (const surface of ['toast', 'message']) {
+		calls.length = 0; handlers.clear(); settings.clear(); window.state.focused = false;
 		settings.set('wsPath', process.execPath);
 		const f = fixture();
-		const service = { ...f.service, request: async () => Response.json([terminal()]) } as any;
-		const target = { host: 'local', slug: 'demo', root: 'file:///demo' };
-		const switching = mode === 'switch' || mode === 'restore';
-		const selection = new WorkspaceSelection(switching ? { host: 'example-alias', slug: 'other', root: 'ws://example-alias/other/' } : target);
+		for (const server of f.service.servers) {server.workspaces = [{ slug: 'demo', path: '/test/demo' }] as ServerState['workspaces'];}
+		const service = { ...f.service, synchronize: async () => {}, request: async () => Response.json([terminal()]) } as DaemonService;
+		const target = { host: 'local', slug: 'demo', root: 'file:///test/demo' };
+		const selection = new WorkspaceSelection({ ...target, host: 'example-alias' });
 		const state = () => { const data = new Map(); return { get: (key: string) => data.get(key), update: async (key: string, value: any) => { data.set(key, value); } }; };
-		const context = { subscriptions: [], globalState: state(), workspaceState: state() } as any;
+		const context = { subscriptions: [], globalState: state(), workspaceState: state() } as unknown as vscode.ExtensionContext;
+		handlers.set('_outscaled.agents.publish', () => ({ version: 1, ok: true, panes: [] }));
 		const grid = new TerminalGrid(context, service, selection, message => { throw new Error(message); });
 		try {
-			await (grid as any).queue;
-			if (mode === 'existing') {
-				await commands.executeCommand('outscaled.focusTerminal', target, 'claude-1');
-				assert.equal(grid.findPane('local', 'agent-id')?.processId, 1234);
-				assert.equal(grid.findPane('example-alias', 'agent-id'), undefined);
-				assert.equal(grid.findPane('local', 'other-id'), undefined);
-			}
-			if (mode === 'restore') grid.memory.remember(target, { layout: { orientation: 0, groups: [{}] },
-				panes: [{ name: 'claude-1', viewColumn: 1, terminalId: 'agent-id' }] });
-			calls.length = 0;
-			handlers.set('outscaled.switchWorkspace', async (workspace: any) => {
-				const next = { ...workspace, root: target.root };
-				await selection.prepare(next);
-				assert.equal(grid.findPane('local', 'agent-id'), undefined, 'detach removes stale client lookup');
-				await selection.select(next);
-			});
+			await grid.flush();
+			handlers.set('outscaled.switchWorkspace', async (workspace: WorkspaceLocation) => { const next = { ...workspace, root: target.root }; await selection.prepare(next); await selection.select(next); });
 			handlers.set('_outscaled.notify', () => surface === 'toast' ? Promise.resolve({ shown: true, clicked: true }) : new Promise(() => {}));
 			handlers.set('message', async () => surface === 'message' ? 'Focus' : undefined);
-			registerNotifications(context, service, selection, grid, message => { throw new Error(message); });
-			settings.set('notifications.enabled', false);
-			service.servers[0].terminals[0].status = 'needs_input'; f.fire();
-			assert.equal(calls.filter(call => call[0] === '_outscaled.notify').length, 0);
-			settings.delete('notifications.enabled');
-			service.servers[0].terminals[0].status = 'idle'; f.fire();
-			if (crashed) service.servers[0].terminals[0].state = 'crashed';
-			else service.servers[0].terminals[0].status = 'needs_input';
-			f.fire();
-			await settle(); await (grid as any).queue;
-			const request = calls.find(call => call[0] === '_outscaled.notify')![1] as any;
-			const message = calls.filter(call => call[0] === 'warning' || call[0] === 'error');
-			assert.deepEqual(message, [[crashed ? 'error' : 'warning', `${request.title}: ${request.body}`, 'Focus']]);
-			assert.equal(request.processId, mode === 'existing' ? 1234 : undefined);
-			const switchIndex = calls.findIndex(call => call[0] === 'outscaled.switchWorkspace');
-			const showIndex = calls.findIndex(call => call[0] === 'show');
-			assert.ok(showIndex >= 0);
-			if (switching) assert.ok(switchIndex >= 0 && showIndex > switchIndex);
-			else assert.equal(switchIndex, -1);
-			assert.equal(calls.filter(call => call[0] === 'createTerminal').length, mode === 'existing' ? 0 : 1, 'restoration and focus do not duplicate clients');
-			assert.equal(selection.current?.host, target.host); assert.equal(selection.current?.slug, target.slug);
-			const pane = grid.findPane('local', 'agent-id')!;
-			assert.ok(pane.tab);
-			assert.equal(paneVisible(target, selection.current, pane.tab, window.tabGroups.all), true);
-			await selection.prepare({ host: 'example-alias', slug: 'other', root: 'ws://example-alias/other/' });
-			assert.equal(grid.findPane('local', 'agent-id'), undefined, 'disposed client is no longer returned');
-		} finally {
-			grid.dispose(); selection.dispose(); for (const subscription of context.subscriptions) subscription.dispose();
-		}
+			registerNotifications(context, service, grid, message => { throw new Error(message); });
+			f.service.servers[0].terminals[0].status = 'needs_input'; f.fire();
+			await settle(); await grid.flush(); await settle();
+			const focused = calls.filter(call => call[0] === '_outscaled.agents.publish' && (call[1] as AgentsSnapshot).focus);
+			assert.equal(focused.length, 1);
+			assert.deepEqual((focused[0][1] as AgentsSnapshot).focus, { workspace: '["local","demo"]', terminal: 'agent-id' });
+			assert.ok(calls.findIndex(call => call[0] === 'outscaled.switchWorkspace') < calls.indexOf(focused[0]));
+		} finally { grid.dispose(); selection.dispose(); for (const subscription of context.subscriptions) {subscription.dispose();} }
 	}
 });

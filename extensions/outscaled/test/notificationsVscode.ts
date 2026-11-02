@@ -43,10 +43,12 @@ export const window = {
 			show: () => { calls.push(['show', options.name]); group.activeTab = tab; tabChanges.fire(); },
 			dispose: () => {
 				group.tabs = group.tabs.filter((candidate: any) => candidate !== tab);
-				if (group.activeTab === tab) group.activeTab = group.tabs.at(-1);
+				if (group.activeTab === tab) {group.activeTab = group.tabs.at(-1);}
 				closedTerminals.fire(terminal); tabChanges.fire();
 			}
 		};
 		return terminal;
 	}
 };
+
+export const extensions = { getExtension: () => undefined };

@@ -8,15 +8,14 @@ import type { Terminal } from '@outscaled/protocol';
 import type { DaemonService } from './daemon/service';
 import type { ServerState } from './daemon/state';
 import type { TerminalGrid } from './grid/controller';
-import type { WorkspaceSelection } from './workspaces/selection';
 import type { WorkspaceLocation } from './workspaces/uri';
 
 type Kind = 'needs_input' | 'crashed';
-interface NotifyRequest { id: string; title: string; body: string; processId?: number; }
+interface NotifyRequest { id: string; title: string; body: string; processId?: number }
 interface NotificationHost {
 	enabled(): boolean;
 	focused(): boolean;
-	pane(host: string, terminalId: string): { processId?: number; visible: boolean } | undefined;
+	pane(host: string, terminalId: string): { processId?: number; visible: boolean } | undefined | PromiseLike<{ processId?: number; visible: boolean } | undefined>;
 	notify(request: NotifyRequest): PromiseLike<{ shown: boolean; clicked: boolean } | undefined>;
 	message(request: NotifyRequest, kind: Kind): PromiseLike<boolean>;
 	focus(workspace: WorkspaceLocation, name: string): PromiseLike<unknown>;
@@ -24,7 +23,7 @@ interface NotificationHost {
 }
 
 function attention(terminal: Terminal): Kind | undefined {
-	if (terminal.state === 'crashed') return 'crashed';
+	if (terminal.state === 'crashed') {return 'crashed';}
 	return terminal.state === 'running' && terminal.status === 'needs_input' ? 'needs_input' : undefined;
 }
 
@@ -40,21 +39,25 @@ export class TerminalNotifications implements vscode.Disposable {
 	}
 
 	private update(): void {
-		for (const host of this.previous.keys()) if (!this.service.servers.some(server => server.host === host && server.online)) this.previous.delete(host);
+		for (const host of this.previous.keys()) {if (!this.service.servers.some(server => server.host === host && server.online)) {this.previous.delete(host);}}
 		for (const server of this.service.servers) {
-			if (!server.online) continue;
+			if (!server.online) {continue;}
 			const previous = this.previous.get(server.host);
 			const next = new Map(server.terminals.map(terminal => [terminal.id, attention(terminal)]));
 			// Commit before dispatching: neither a pending toast nor a suppressed one
 			// should cause duplicate notifications on the next health/state update.
 			this.previous.set(server.host, next);
-			if (!previous) continue; // Startup and reconnect snapshots establish a baseline.
+			if (!previous) {continue;} // Startup and reconnect snapshots establish a baseline.
 			for (const terminal of server.terminals) {
 				const kind = next.get(terminal.id);
-				if (!kind || previous.get(terminal.id) === kind || !this.host.enabled()) continue;
+				if (!kind || previous.get(terminal.id) === kind || !this.host.enabled()) {continue;}
+				const dispatch = (pane: { processId?: number; visible: boolean } | undefined) => {
+					if (this.stopped || (this.host.focused() && pane?.visible)) {return;}
+					this.show(server, terminal, kind, pane?.processId);
+				};
 				const pane = this.host.pane(server.host, terminal.id);
-				if (this.host.focused() && pane?.visible) continue;
-				this.show(server, terminal, kind, pane?.processId);
+				if (pane && typeof (pane as PromiseLike<object>).then === 'function') {void Promise.resolve(pane).then(dispatch).catch(error => this.host.log(String(error)));}
+				else {dispatch(pane as { processId?: number; visible: boolean } | undefined);}
 			}
 		}
 	}
@@ -68,9 +71,9 @@ export class TerminalNotifications implements vscode.Disposable {
 			...(processId === undefined ? {} : { processId })
 		};
 		const focus = async (clicked: boolean) => {
-			if (!clicked || this.stopped) return;
+			if (!clicked || this.stopped) {return;}
 			// Either notification can outlive the terminal or its server registration.
-			if (!this.service.servers.some(current => current.host === server.host && current.online && current.terminals.some(terminal => terminal.id === id))) return;
+			if (!this.service.servers.some(current => current.host === server.host && current.online && current.terminals.some(terminal => terminal.id === id))) {return;}
 			// The sidebar command serializes switching before focus/open, and persists
 			// its open request if entering the dedicated workspace reloads the window.
 			await this.host.focus({ host: server.host, slug: workspace }, name);
@@ -86,20 +89,14 @@ export class TerminalNotifications implements vscode.Disposable {
 	dispose(): void { this.stopped = true; this.subscription.dispose(); this.previous.clear(); }
 }
 
-/** Any group's active terminal tab is visible, even when another group has focus. */
-export function paneVisible(workspace: WorkspaceLocation, selected: WorkspaceLocation | undefined, tab: vscode.Tab | undefined, groups: readonly vscode.TabGroup[]): boolean {
-	return tab !== undefined && selected?.host === workspace.host && selected.slug === workspace.slug && groups.some(group => group.activeTab === tab);
-}
-
-export function registerNotifications(context: vscode.ExtensionContext, service: DaemonService, selection: WorkspaceSelection,
+export function registerNotifications(context: vscode.ExtensionContext, service: DaemonService,
 	grid: TerminalGrid, log: (message: string) => void): void {
 	context.subscriptions.push(new TerminalNotifications(service, {
 		enabled: () => vscode.workspace.getConfiguration('outscaled').get<boolean>('notifications.enabled', true),
 		focused: () => vscode.window.state.focused,
-		pane: (host, id) => {
-			const pane = grid.findPane(host, id);
-			return pane && { processId: pane.processId,
-				visible: paneVisible(pane.workspace, selection.current, pane.tab, vscode.window.tabGroups.all) };
+		pane: async (host, id) => {
+			const pane = await grid.findPane(host, id);
+			return pane && { processId: pane.processId, visible: pane.visible };
 		},
 		notify: request => vscode.commands.executeCommand('_outscaled.notify', request),
 		message: async (request, kind) => {

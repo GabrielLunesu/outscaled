@@ -29,14 +29,14 @@ export class Connection {
 	}
 
 	setEndpoint(url: string | undefined, error?: string): void {
-		if (this.stopped) return;
+		if (this.stopped) {return;}
 		this.cancel();
 		this.url = url;
 		this.state.online = false;
 		this.state.error = error ?? 'Connecting…';
 		this.changed();
-		if (url) this.connect();
-		else if (error) this.report(error);
+		if (url) {this.connect();}
+		else if (error) {this.report(error);}
 	}
 
 	private cancel(): void {
@@ -51,14 +51,14 @@ export class Connection {
 	}
 
 	private connect(): void {
-		if (this.stopped || !this.url) return;
+		if (this.stopped || !this.url) {return;}
 		const generation = this.generation;
 		this.controller = new AbortController();
 		const socket = new WebSocket(`${this.url.replace(/^http/, 'ws')}/v1/stream`, { handshakeTimeout: 10000 });
 		this.socket = socket;
 		let failed = false;
 		const fail = (error: string) => {
-			if (failed || generation !== this.generation || this.stopped) return;
+			if (failed || generation !== this.generation || this.stopped) {return;}
 			failed = true;
 			this.cancel();
 			this.state.online = false;
@@ -71,27 +71,33 @@ export class Connection {
 		socket.on('close', (code, reason) => fail(`Stream closed (${code})${reason.length ? `: ${reason}` : ''}`));
 		socket.on('open', () => { void this.snapshot(generation, fail); });
 		socket.on('message', data => {
-			if (generation !== this.generation) return;
+			if (generation !== this.generation) {return;}
 			try {
 				const message = StreamMessage.parse(JSON.parse(data.toString()));
 				if (this.fetching) {
-					if (this.pending.length >= 10000) throw new Error('Stream snapshot buffer exceeded');
+					if (this.pending.length >= 10000) {throw new Error('Stream snapshot buffer exceeded');}
 					this.pending.push(message);
 				} else {
-					if (applyMessage(this.state, message)) void this.snapshot(generation, fail);
+					if (applyMessage(this.state, message)) {void this.snapshot(generation, fail);}
 					this.changed();
 				}
 			} catch (error) { fail(`Invalid stream message: ${error instanceof Error ? error.message : String(error)}`); }
 		});
 		// Refresh shares the snapshot queue and this socket's failure handler.
-		this.refreshSnapshot = () => { void this.snapshot(generation, fail); };
+		this.refreshSnapshot = () => this.snapshot(generation, fail);
 	}
 
-	private refreshSnapshot = () => {};
+	private refreshSnapshot: () => Promise<void> = async () => {};
+	private snapshotWork = Promise.resolve();
 
-	private async snapshot(generation: number, fail: (error: string) => void): Promise<void> {
-		if (this.stopped || generation !== this.generation) return;
-		if (this.fetching) { this.dirty = true; return; }
+	private snapshot(generation: number, fail: (error: string) => void): Promise<void> {
+		if (this.stopped || generation !== this.generation) {return Promise.resolve();}
+		if (this.fetching) { this.dirty = true; return this.snapshotWork; }
+		this.snapshotWork = this.performSnapshot(generation, fail);
+		return this.snapshotWork;
+	}
+
+	private async performSnapshot(generation: number, fail: (error: string) => void): Promise<void> {
 		this.fetching = true;
 		try {
 			do {
@@ -99,7 +105,7 @@ export class Connection {
 				const signal = AbortSignal.any([this.controller!.signal, AbortSignal.timeout(3000)]);
 				const request = async (path: string): Promise<unknown> => {
 					const response = await fetch(`${this.url}/v1/${path}`, { signal });
-					if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
+					if (!response.ok) {throw new Error(`${path}: HTTP ${response.status}`);}
 					return response.json();
 				};
 				const [health, workspaces, terminals] = await Promise.all([
@@ -107,31 +113,38 @@ export class Connection {
 					request('workspaces').then(value => Workspace.array().parse(value)),
 					request('terminals').then(value => Terminal.array().parse(value))
 				]);
-				if (generation !== this.generation) return;
+				if (generation !== this.generation) {return;}
 				Object.assign(this.state, { health, workspaces, terminals, online: true, error: undefined });
 				this.settleReadiness();
 				// Replay live changes over the HTTP snapshot, then refetch membership if needed.
-				for (const message of this.pending.splice(0)) this.dirty = applyMessage(this.state, message) || this.dirty;
+				for (const message of this.pending.splice(0)) {this.dirty = applyMessage(this.state, message) || this.dirty;}
 				this.backoff.reset();
 				this.recovered();
 				this.changed();
 			} while (this.dirty);
 		} catch (error) {
-			if (generation === this.generation) fail(`Daemon request failed: ${error instanceof Error ? error.message : String(error)}`);
+			if (generation === this.generation) {fail(`Daemon request failed: ${error instanceof Error ? error.message : String(error)}`);}
 		} finally {
-			if (generation === this.generation) this.fetching = false;
+			if (generation === this.generation) {this.fetching = false;}
 		}
 	}
 
+	/** Await a snapshot started after the caller's mutation, including any in-flight refetch. */
+	async synchronize(): Promise<void> {
+		if (this.stopped || !this.state.online) {throw new Error('Server offline');}
+		await this.refreshSnapshot();
+		if (this.stopped || !this.state.online) {throw new Error('Server offline');}
+	}
+
 	refresh(): void {
-		if (this.stopped || !this.url) return;
-		if (this.socket?.readyState === WebSocket.OPEN) this.refreshSnapshot();
+		if (this.stopped || !this.url) {return;}
+		if (this.socket?.readyState === WebSocket.OPEN) {this.refreshSnapshot();}
 		else { this.cancel(); this.connect(); }
 	}
 
 	/** Use the current tunnel endpoint and cancel requests when it is replaced. */
 	async request(path: string, init: RequestInit = {}): Promise<Response> {
-		if (this.stopped) throw new Error('Connection stopped');
+		if (this.stopped) {throw new Error('Connection stopped');}
 		// Restored editors can request files before config, SSH and the first snapshot
 		// are ready. Share one bounded wait, without opening another connection.
 		if (!this.state.online) {
@@ -144,7 +157,7 @@ export class Connection {
 			}
 			await this.readiness.promise;
 		}
-		if (this.stopped || !this.url || !this.controller) throw new Error('Server offline');
+		if (this.stopped || !this.url || !this.controller) {throw new Error('Server offline');}
 		return fetch(`${this.url}/v1/${path}`, { ...init,
 			signal: AbortSignal.any([this.controller.signal, AbortSignal.timeout(10000)]) });
 	}
@@ -152,10 +165,10 @@ export class Connection {
 	private settleReadiness(error?: Error): void {
 		const pending = this.readiness;
 		this.readiness = undefined;
-		if (!pending) return;
+		if (!pending) {return;}
 		clearTimeout(pending.timer);
-		if (error) pending.reject(error);
-		else pending.resolve();
+		if (error) {pending.reject(error);}
+		else {pending.resolve();}
 	}
 
 	dispose(): void { this.stopped = true; this.settleReadiness(new Error('Connection stopped')); this.cancel(); }

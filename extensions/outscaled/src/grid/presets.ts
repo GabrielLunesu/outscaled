@@ -3,35 +3,26 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-export interface EditorGroupLayout { orientation?: 0 | 1; groups: { size?: number; groups?: EditorGroupLayout['groups'] }[]; }
-export interface GridLayout { id: string; label: string; editor: EditorGroupLayout; /** ViewColumns in preset fill order. */ columns: readonly number[]; }
+import { LayoutId, layoutIds } from '../../../../src/vs/workbench/contrib/outscaled/common/agentsLayout.js';
 
-// Depth-first editor group order is row-major for this 2×2 definition. In 2+1,
-// the two left groups precede the full-height right group.
-export const layouts: readonly GridLayout[] = [
-	{ id: 'single', label: 'Single', editor: { orientation: 0, groups: [{}] }, columns: [1] },
-	{ id: 'side-by-side', label: 'Side by side', editor: { orientation: 0, groups: [{}, {}] }, columns: [1, 2] },
-	{ id: 'stacked', label: 'Stacked', editor: { orientation: 1, groups: [{}, {}] }, columns: [1, 2] },
-	{ id: '2x2', label: '2×2', editor: { orientation: 1, groups: [{ groups: [{}, {}] }, { groups: [{}, {}] }] }, columns: [1, 2, 3, 4] },
-	{ id: 'four-across', label: 'Four across', editor: { orientation: 0, groups: [{}, {}, {}, {}] }, columns: [1, 2, 3, 4] },
-	{ id: '2+1', label: 'Two stacked + right', editor: { orientation: 0, groups: [{ groups: [{}, {}] }, {}] }, columns: [1, 2, 3] }
-];
+export const layouts = layoutIds.map(id => ({ id, label: ({ single: 'Single', 'side-by-side': 'Side by side', stacked: 'Stacked', '2x2': '2×2', 'four-across': 'Four across', '2+1': 'Two stacked + right' })[id],
+	count: ({ single: 1, 'side-by-side': 2, stacked: 2, '2x2': 4, 'four-across': 4, '2+1': 3 })[id] }));
 export type PaneCommand = 'claude' | 'codex' | 'shell';
-export interface GridPreset { id: string; label: string; layout: string; commands: readonly PaneCommand[]; }
-export interface GridPane { name: string; command?: string; viewColumn: number; }
+export interface GridPreset { id: string; label: string; layout: LayoutId; commands: readonly PaneCommand[] }
+export interface GridPane { name: string; command?: string  }
 export const presets: readonly GridPreset[] = [
 	{ id: '2-claude-2-codex', label: '2 Claude + 2 Codex', layout: '2x2', commands: ['claude', 'claude', 'codex', 'codex'] },
 	{ id: 'claude-shell', label: '1 Claude + shell', layout: 'side-by-side', commands: ['claude', 'shell'] },
 	...layouts.map(layout => ({ id: `shells-${layout.id}`, label: `${layout.label} · shells`, layout: layout.id,
-		commands: layout.columns.map(() => 'shell' as const) }))
+		commands: Array.from({ length: layout.count }, () => 'shell' as const) }))
 ];
-export function expandPreset(preset: GridPreset): { layout: GridLayout; panes: GridPane[] } {
+export function expandPreset(preset: GridPreset): { layout: typeof layouts[number]; panes: GridPane[] } {
 	const layout = layouts.find(layout => layout.id === preset.layout);
-	if (!layout || preset.commands.length !== layout.columns.length) throw new Error('Preset does not fill its layout');
+	if (!layout || preset.commands.length !== layout.count) {throw new Error('Preset does not fill its layout');}
 	const counts = new Map<PaneCommand, number>();
-	return { layout, panes: preset.commands.map((command, index) => {
+	return { layout, panes: preset.commands.map(command => {
 		const count = (counts.get(command) ?? 0) + 1;
 		counts.set(command, count);
-		return { name: `${command}-${count}`, ...(command === 'shell' ? {} : { command }), viewColumn: layout.columns[index] };
+		return { name: `${command}-${count}`, ...(command === 'shell' ? {} : { command }) };
 	}) };
 }
