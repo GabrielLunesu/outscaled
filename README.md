@@ -37,7 +37,7 @@ Phases 1 and 2 (the daemon) run on macOS and Linux, and phase 3 (the VS Code for
 
 ## What's next
 
-Phase 3 has one item left: clickable macOS notifications need the app signed with an Apple development certificate, because macOS refuses notification permission to the unsigned dev build. After Phase 3 is reviewed in daily use, **Phase 4** adds a desktop and a logged-in Chrome on each VPS, shared by agents and you.
+Phase 3 has one item left: clickable macOS notifications need the app signed with an Apple development certificate, because macOS refuses notification permission to the unsigned dev build. **Phase 4** reworks the app around agents on your Mac: it opens on your agents instead of code, a New agents dialog opens any mix of Claude Code and Codex panes, and changes, diffs and the editor are one click away. VS Code's chat panel and Copilot go. **Phase 5** then adds a desktop and a logged-in Chrome on each VPS, shared by agents and you.
 
 The full plan, with a checklist per phase, is in [docs/spec.md](docs/spec.md).
 
@@ -47,8 +47,8 @@ The full plan, with a checklist per phase, is in [docs/spec.md](docs/spec.md).
 | --- | --- |
 | `daemon/` | `wsd` and the `ws` CLI (Bun, TypeScript) |
 | `protocol/` | Shared API and event types |
-| `extensions/outscaled/` | The built-in extension: sidebar, grid, presets, PC panel |
-| `src/vs/workbench/contrib/outscaled/` | Core VS Code changes (from phase 3) |
+| `extensions/outscaled/` | The built-in extension: daemon plumbing, presets, theme, PC panel |
+| `src/vs/workbench/contrib/outscaled/` | Core VS Code changes: live status and notifications, and the agents-first UI from phase 4 |
 | `desktop/` | VPS desktop setup and Chrome launcher |
 | `docs/` | The spec and the orchestration rules |
 

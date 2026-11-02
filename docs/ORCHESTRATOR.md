@@ -8,8 +8,8 @@ Source of truth: `docs/spec.md`, specifically the checklist of the current phase
 
 The repo root is the VS Code fork itself (a fork of microsoft/vscode), not a subfolder. Our own code sits alongside VS Code's:
 
-- `src/vs/workbench/contrib/outscaled/`: core changes (workspace switching, live tab status)
-- `extensions/outscaled/`: the built-in extension (sidebar, grid, presets, PC panel)
+- `src/vs/workbench/contrib/outscaled/`: core changes (the agents-first UI, live status, notifications)
+- `extensions/outscaled/`: the built-in extension (daemon plumbing, presets, theme, PC panel)
 - `daemon/`, `protocol/`, `desktop/`: wsd, shared types, VPS desktop setup
 - `docs/`: the spec and this file
 
