@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { answerTerminal } from '../src/grid/answers';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
@@ -281,4 +282,21 @@ test('Open in Grid inserts right of focus, fills an empty grid, and never duplic
 	assert.deepEqual(layoutTerminals(openGridPane(presetLayout('single', []), 'background')), ['background']);
 	assert.deepEqual(openGridPane(tree, 'right', 'left'), tree);
 	assert.deepEqual(layoutTerminals(openGridPane(tree, 'background', 'stale-focus')), ['left', 'right', 'background']);
+});
+
+
+test('permission answers use the guarded route, synchronize on success and jump only on conflict', async () => {
+	for (const status of [200, 409, 503, 'network'] as const) {
+		const calls: object[] = [];
+		const work = answerTerminal({ request: async (host, path, init) => {
+			calls.push({ host, path, body: JSON.parse(init!.body as string) });
+			if (status === 'network') { throw new Error('Network unavailable'); }
+			return Response.json(status === 200 ? { question: 'Do you want to proceed?', option: { number: 4, label: 'No' } } : { error: { message: 'Prompt changed' } }, { status });
+		}, synchronize: async host => { calls.push({ sync: host }); } }, { host: 'example-alias', slug: 'demo' }, 'claude-1', 'deny',
+			async () => { calls.push({ jump: true }); }, message => { calls.push({ message }); });
+		if (status === 503 || status === 'network') { await assert.rejects(work, status === 503 ? /HTTP 503/ : /Network unavailable/); }
+		else { await work; }
+		assert.deepEqual(calls, [{ host: 'example-alias', path: 'workspaces/demo/terminals/claude-1/answer', body: { answer: 'deny' } },
+			...(status === 200 ? [{ sync: 'example-alias' }] : status === 409 ? [{ jump: true }, { message: 'The permission prompt changed or is no longer on screen. Review the agent to continue.' }] : [])]);
+	}
 });

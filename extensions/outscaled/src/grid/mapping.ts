@@ -47,7 +47,7 @@ export function agentsSnapshot(servers: readonly ServerState[], selected: Select
 		}}
 		return { id, name: workspace.slug, server: server.host, root, path: workspace.path, selected: !!selected && id === workspaceKey(selected), online: server.online,
 			branch: branches.get(id), layout, schedules, terminals: terminals.map(terminal => ({ id: terminal.id, name: terminal.name,
-				runtime: terminal.runtime === 'claude-code' || terminal.runtime === 'codex' ? terminal.runtime : 'shell', status: tabStatus(terminal), latestLine: terminal.latestLine,
+				runtime: terminal.runtime === 'claude-code' || terminal.runtime === 'codex' ? terminal.runtime : 'shell', status: tabStatus(terminal), latestLine: terminal.latestLine, statusChangedAt: terminal.statusChangedAt, request: terminal.request,
 				...(executable && terminal.state === 'running' ? { launch: { executable, args: attachArgs(server.host, workspace.slug, terminal.name), env } } : {}) })) };
 	})) };
 }

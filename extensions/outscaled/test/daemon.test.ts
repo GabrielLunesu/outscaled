@@ -242,3 +242,16 @@ test('latest line events apply to the matching workspace and run events refresh 
 	}
 	assert.throws(() => applyMessage(state, { ...message, payload: { latestLine: 'invalid\nline' } } as StreamMessage));
 });
+
+
+test('late permission data updates the request without moving its waiting age; working clears it', () => {
+	const state: ServerState = { host: 'local', online: true, workspaces: [workspace], terminals: [{ ...terminal }] };
+	const first = status('needs_input');
+	applyMessage(state, first);
+	const request = { message: 'Permission required', permission: { question: 'Do you want to proceed?', options: [{ number: 1, label: 'Yes' }, { number: 4, label: 'No' }] } };
+	applyMessage(state, { ...status('needs_input', '2026-01-01T00:00:02.000Z'), payload: { newStatus: 'needs_input', request } });
+	assert.deepEqual({ request: state.terminals[0].request, time: state.terminals[0].statusChangedAt }, { request, time: '2026-01-01T00:00:01.000Z' });
+	applyMessage(state, status('working', '2026-01-01T00:00:03.000Z'));
+	assert.deepEqual({ request: state.terminals[0].request, time: state.terminals[0].statusChangedAt }, { request: null, time: '2026-01-01T00:00:03.000Z' });
+	assert.throws(() => applyMessage(state, { ...first, payload: { newStatus: 'needs_input', request: { permission: 1 } } }));
+});

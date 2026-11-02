@@ -60,7 +60,10 @@ async function request(path: string, body?: unknown) {
 	assert.ok(response.ok, `${path}: ${response.status}`);
 	return response.status === 204 ? undefined : response.json();
 }
-const capture = async (name: string) => { console.log('CAPTURE', name); await win.screenshot({ path: join(evidence, name + '.png') }); };
+const capture = async (name: string) => {
+	if (name.startsWith('needs-you-')) { await until(async () => await win.locator('.terminal-resize-overlay.visible').count() === 0, 'terminal resize indicators settle'); }
+	console.log('CAPTURE', name); await win.screenshot({ path: join(evidence, name + '.png') });
+};
 const proof = () => win.locator('.outscaled-agent-pane').evaluateAll((panes: Element[]) => panes.map(pane => {
 	const bounds = pane.getBoundingClientRect();
 	return { id: (pane as HTMLElement).dataset.terminalId, instanceId: (pane as HTMLElement).dataset.instanceId,
@@ -70,14 +73,10 @@ const proof = () => win.locator('.outscaled-agent-pane').evaluateAll((panes: Ele
 }));
 try {
 	const agentLog = join(temporary, 'agent-args.jsonl');
+	const permissionControl = join(temporary, 'permission-control'); mkdirSync(permissionControl);
+	const permissionReport = join(evidence, 'permission-keys.jsonl'); writeFileSync(permissionReport, '');
 	for (const agent of ['claude', 'codex']) { writeFileSync(join(bin, agent), `#!${process.execPath}
-const {appendFileSync}=require('node:fs');
-appendFileSync(process.env.TEST_AGENT_LOG,JSON.stringify({agent:'${agent}',args:process.argv.slice(2)})+'\\n');
-console.log(process.argv.includes('SCHEDULE_FIXTURE') ? 'SCHEDULE_RESULT' : 'fake ${agent} ready — AGENTS_VIEW');
-require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
- if(line==='HISTORY'){for(let i=1;i<=80;i++)console.log('AGENTS_HISTORY_'+i);console.log('fake ${agent} ready — AGENTS_VIEW');}
- console.log('received:'+line);
-});
+import(${JSON.stringify(pathToFileURL(join(root, 'extensions/outscaled/test/fakeAgent.mts')).href)}).then(({ runFakeAgent }) => runFakeAgent(${JSON.stringify(agent)}));
 `, { mode: 0o755 }); }
 
 	writeFileSync(join(bin, 'ssh'), `#!${process.execPath}
@@ -107,7 +106,7 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	writeFileSync(join(folder, 'README.md'), '# Agents view\n\nNative Code mode workspace file.\n');
 	const second = join(temporary, 'second'); mkdirSync(second); writeFileSync(join(second, 'README.md'), '# Second workspace\n');
 	const env = { ...process.env, SHELL: '/bin/sh', PATH: `${bin}:${process.env.PATH}`, NODE_ENV: 'development', VSCODE_DEV: '1', VSCODE_CLI: '1',
-		TEST_AGENT_LOG: agentLog, TEST_SSH_LOG: sshLog, WSD_PORT: String(port), WSD_TMUX_SOCKET: socket, WSD_CONFIG_DIR: config, WSD_STATE_DIR: join(temporary, 'state'),
+		TEST_AGENT_LOG: agentLog, TEST_SSH_LOG: sshLog, TEST_PERMISSION_CONTROL: permissionControl, TEST_PERMISSION_REPORT: permissionReport, TEST_PERMISSION_FIXTURES: join(root, 'daemon/test/fixtures/permissions'), WSD_PORT: String(port), WSD_TMUX_SOCKET: socket, WSD_CONFIG_DIR: config, WSD_STATE_DIR: join(temporary, 'state'),
 		WSD_WORKSPACES_DIR: join(temporary, 'workspaces'), OUTSCALED_CONFIG_DIR: config };
 	delete env.ELECTRON_RUN_AS_NODE; delete env.GIT_CONFIG_COUNT; delete env.GIT_CONFIG_PARAMETERS;
 	assert.equal(spawnSync('tmux', ['-f', '/dev/null', '-S', socket, 'new-session', '-d', '-s', 'fixture', '/bin/sleep 3600'], { env }).status, 0);
@@ -234,6 +233,7 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	assert.equal(await row('agents-demo').getAttribute('aria-selected'), 'true');
 	await shortcut(2, 'second-demo');
 	await win.locator('.outscaled-needs-you').click();
+	await win.locator('.outscaled-waiting-list').getByRole('button', { name: 'Jump', exact: true }).click();
 	await until(async () => (await proof()).length === 4 && await win.locator('.outscaled-workspace-name').innerText() === 'agents-demo', 'needs-you cross-workspace focus');
 	await until(async () => await win.evaluate(() => document.activeElement?.closest('.outscaled-agent-pane')?.getAttribute('data-terminal-id')) === target.id, 'waiting pane receives focus');
 	const needsInput = await proof(); assert.notEqual(needsInput[0].dot, working[0].dot);
@@ -446,7 +446,14 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	// Phase 4 item 3: pane menus, scoped shortcuts, background membership and nested sashes.
 	const focusedId = () => win.evaluate(() => document.activeElement?.closest('.outscaled-agent-pane')?.getAttribute('data-terminal-id'));
 	const paneById = (id: string) => win.locator(`.outscaled-agent-pane[data-terminal-id="${id}"]`);
-	const paneFocus = async (id: string) => { await paneById(id).locator('.xterm-helper-textarea').focus(); };
+	const paneFocus = async (id: string) => {
+		await paneById(id).locator('.xterm-helper-textarea').focus();
+		await until(async () => await focusedId() === id && await win.evaluate(id => {
+			const agents = (window as ProbedWindow).__agentsProbe.agents;
+			const workspace = agents.snapshot.workspaces.find(workspace => workspace.selected);
+			return agents.mode === 'agents' && !!workspace && agents.owners.get(workspace.id)?.active === id;
+		}, id), 'native terminal and pane focus agree');
+	};
 	const daemonBeforeActions = await request('workspaces/agents-demo/terminals');
 	await paneFocus(alwaysId);
 	await win.keyboard.press('F1'); await win.locator('.quick-input-widget input').fill('>Add Claude to the Right');
@@ -676,6 +683,84 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	assert.equal(await card.getByRole('button', { name: 'Delete', exact: true }).isVisible(), false);
 	await capture('scheduled-card-workspace'); await win.keyboard.press('Escape');
 
+	// Needs-you permissions use real redacted screens and the daemon's screen guard.
+	await switchWorkspace('agents-demo');
+	await command('notifications.clearAll');
+	const permissionRows = () => readFileSync(permissionReport, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+	const drawPermission = async (terminal: { id: string; name: string; workspace: string }, screen: 'edit' | 'bash') => {
+		await request('hooks/claude-code', { terminal: terminal.id, payload: { hook_event_name: 'Stop' } });
+		writeFileSync(join(permissionControl, terminal.id + '.json'), JSON.stringify({ screen, nonce: Date.now() }));
+		await until(async () => !!(await request(`workspaces/${terminal.workspace}/terminals`)).find(entry => entry.id === terminal.id)?.request?.permission, 'permission captured from fake ' + screen);
+		await until(async () => await win.evaluate(id => (window as ProbedWindow).__agentsProbe.agents.snapshot.workspaces.some(workspace => workspace.terminals.some(pane => pane.id === id && !!pane.request?.permission)), terminal.id), 'permission bridged');
+		await command('notifications.clearAll');
+	};
+	const waitingList = win.locator('.outscaled-waiting-list');
+	const waitingRow = (id: string) => waitingList.locator(`.outscaled-waiting-row[data-terminal-id="${id}"]`);
+	const showWaiting = async () => { await win.locator('.outscaled-needs-you').click(); await waitingList.waitFor(); };
+	// Remove old notification-only waits before asserting global order and count.
+	for (const terminal of await request('terminals')) {
+		if (terminal.runtime === 'claude-code') { await request('hooks/claude-code', { terminal: terminal.id, payload: { hook_event_name: 'Stop' } }); }
+	}
+	await chipFor(claudeId).click(); await card.getByRole('button', { name: 'Open in Grid', exact: true }).click();
+	await until(async () => await focusedId() === claudeId, 'permission pane open');
+	const editAgent = (await request('workspaces/agents-demo/terminals')).find(entry => entry.id === claudeId);
+	const bashAgent = secondTerminals.find(entry => entry.runtime === 'claude-code');
+	await drawPermission(editAgent, 'edit');
+	await paneById(claudeId).locator('.outscaled-request-banner').getByText('Do you want to create notes.txt?', { exact: true }).waitFor();
+	const semanticColors = await win.evaluate(id => {
+		const pane = document.querySelector<HTMLElement>(`.outscaled-agent-pane[data-terminal-id="${id}"]`)!;
+		const badge = document.querySelector('.outscaled-workspace-row[aria-selected="true"] .outscaled-workspace-badge')!;
+		return [getComputedStyle(pane).borderColor, getComputedStyle(pane.querySelector('.outscaled-request-banner')!).color, getComputedStyle(badge).backgroundColor, getComputedStyle(document.querySelector('.outscaled-needs-you')!).color];
+	}, claudeId);
+	assert.ok(semanticColors.every(color => color === semanticColors[0]), 'needs-you uses one theme color');
+	await capture('needs-you-pane-banner');
+	await switchWorkspace('second-demo');
+	await win.locator('.outscaled-agent-pane .xterm-helper-textarea').first().focus();
+	await win.keyboard.press('Meta+j');
+	await until(async () => await focusedId() === claudeId && await win.locator('.outscaled-workspace-name').innerText() === 'agents-demo', 'Cmd+J inside terminal crosses workspaces');
+	await drawPermission(bashAgent, 'bash');
+	await paneFocus(claudeId); await win.keyboard.press('Meta+j');
+	await until(async () => await focusedId() === bashAgent.id, 'Cmd+J cycles to newer wait');
+	await win.keyboard.press('Meta+j'); await until(async () => await focusedId() === claudeId, 'Cmd+J wraps to oldest wait');
+	await win.locator('.outscaled-needs-you').getByText('2 need you', { exact: true }).waitFor();
+	await showWaiting();
+	assert.deepEqual(await waitingList.locator('.outscaled-waiting-row').evaluateAll(rows => rows.map(row => row.getAttribute('data-terminal-id'))), [claudeId, bashAgent.id]);
+	await win.keyboard.press('ArrowDown');
+	assert.equal(await waitingRow(bashAgent.id).evaluate(row => row === document.activeElement), true);
+	await win.keyboard.press('Escape'); await waitingList.waitFor({ state: 'detached' });
+	await showWaiting(); await capture('needs-you-list');
+	const selectedBeforeAnswer = await win.locator('.outscaled-workspace-name').innerText();
+	await waitingRow(claudeId).getByRole('button', { name: 'Allow Once', exact: true }).click();
+	await until(async () => await waitingRow(claudeId).count() === 0, 'Allow Once clears edit row');
+	assert.equal(await win.locator('.outscaled-workspace-name').innerText(), selectedBeforeAnswer);
+	assert.equal(await paneById(claudeId).locator('.outscaled-request-banner').isVisible(), false);
+	await waitingRow(bashAgent.id).getByRole('button', { name: 'Deny', exact: true }).click();
+	await waitingList.waitFor({ state: 'detached' });
+	await until(() => permissionRows().some(row => row.terminal === claudeId && row.key === '1') && permissionRows().some(row => row.terminal === bashAgent.id && row.key === '4'), 'fake reports exact edit allow and Bash deny keys');
+	assert.equal(await win.locator('.outscaled-workspace-name').innerText(), selectedBeforeAnswer, 'answering another workspace does not open it');
+	await drawPermission(editAgent, 'edit');
+	writeFileSync(join(permissionControl, claudeId + '.json'), JSON.stringify({ screen: 'clear', nonce: Date.now() }));
+	await until(() => permissionRows().filter(row => row.terminal === claudeId && row.screen === 'clear').length === 1, 'fake clears permission without a status hook');
+	const keysBeforeConflict = permissionRows().filter(row => row.key);
+	await switchWorkspace('second-demo'); await showWaiting();
+	await waitingRow(claudeId).getByRole('button', { name: 'Allow Once', exact: true }).click();
+	await until(async () => await focusedId() === claudeId && await win.locator('.outscaled-workspace-name').innerText() === 'agents-demo', 'stale prompt jumps to the agent');
+	await win.getByText('The permission prompt changed or is no longer on screen. Review the agent to continue.', { exact: true }).waitFor();
+	assert.deepEqual(permissionRows().filter(row => row.key), keysBeforeConflict, '409 sends no key');
+	await command('notifications.clearAll');
+	await drawPermission(editAgent, 'edit');
+	await paneFocus(claudeId); await win.keyboard.press('Meta+m'); await chipFor(claudeId).waitFor();
+	const beforeJumpGrid = (await proof()).map(pane => pane.id);
+	await switchWorkspace('second-demo');
+	await win.locator('.outscaled-agent-pane .xterm-helper-textarea').first().focus(); await win.keyboard.press('Meta+j');
+	await card.getByText('Do you want to create notes.txt?', { exact: true }).waitFor();
+	await card.getByRole('button', { name: 'Allow Once', exact: true }).waitFor();
+	await card.getByRole('button', { name: 'Deny', exact: true }).waitFor();
+	assert.deepEqual((await proof()).map(pane => pane.id), beforeJumpGrid, 'jump opens the card without changing the grid');
+	await capture('needs-you-background-card');
+	await win.keyboard.press('Escape');
+	writeFileSync(join(evidence, 'needs-you-proof.json'), JSON.stringify({ semanticColors, keys: permissionRows(), noKeyOnConflict: true, backgroundGridUnchanged: true }, null, 2));
+
 	// Exercise the retained VPS transport through a private SSH double. Both endpoints
 	// use this fixture daemon; no connection is made to port 7770 or a real host.
 	await request('hooks/claude-code', { terminal: target.id, payload: { hook_event_name: 'Stop' } });
@@ -720,12 +805,12 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	assert.equal(ssh.filter(entry => entry.kind === 'attach').length, 2);
 	writeFileSync(join(evidence, 'proof.json'), JSON.stringify({ initial, working, needsInput, before, after, terminals, secondTerminals, geometries, remote, ssh, errors }, null, 2));
 	assert.deepEqual(errors, []);
-	console.log('PASS: core sidebar, live badges, dot/row focus, keyboard navigation, Agents/Code shortcuts, native commands, identity, tmux history, workspace/reload persistence, needs-you focus, six split geometries, New agents modal and keyboard focus, typed commands, fresh launches, non-destructive replacement/reload, right/add insertion, literal prompts, run modes, private presets, pane actions and scoped shortcuts, persistent background membership and empty grids, nested sash resizing/reload/reset and old layout migration, background chips and cards, live latest lines, horizontal overflow, scheduled creation/run/edit/pause/resume/delete and read-only workspace schedules');
+	console.log('PASS: core sidebar, live badges, dot/row focus, keyboard navigation, Agents/Code shortcuts, native commands, identity, tmux history, workspace/reload persistence, needs-you focus, six split geometries, New agents modal and keyboard focus, typed commands, fresh launches, non-destructive replacement/reload, right/add insertion, literal prompts, run modes, private presets, pane actions and scoped shortcuts, cross-workspace waiting order and Cmd+J cycling inside terminals, permission answers with exact fake key reports and no-key 409 fallback, waiting background cards without grid changes, persistent background membership and empty grids, nested sash resizing/reload/reset and old layout migration, background chips and cards, live latest lines, horizontal overflow, scheduled creation/run/edit/pause/resume/delete and read-only workspace schedules');
 } finally {
 	writeFileSync(join(evidence, 'page-errors.json'), JSON.stringify(errors, null, 2));
 	writeFileSync(join(evidence, 'renderer-errors.json'), JSON.stringify(rendererErrors, null, 2));
 	if (app) {
-		if (win) { try { await capture('last-state'); writeFileSync(join(evidence, 'last-dom.txt'), await win.locator('body').innerText()); writeFileSync(join(evidence, 'last-html.txt'), await win.locator('.outscaled-agents-host').evaluateAll((elements: Element[]) => elements.map(element => element.outerHTML).join('\n'))); writeFileSync(join(evidence, 'last-proof.json'), JSON.stringify(await proof(), null, 2)); writeFileSync(join(evidence, 'last-bridge.json'), JSON.stringify(await win.evaluate(() => ({ snapshot: (window as ProbedWindow).__agentsProbe.agents.snapshot, receipt: (window as ProbedWindow).__agentsProbe.agents.receipt(), instances: (window as ProbedWindow).__agentsProbe.terminals.instances.map(instance => ({id:instance.instanceId, disposed:instance.isDisposed, launch:instance.shellLaunchConfig})) })), null, 2)); } catch {} }
+		if (win) { try { await capture('last-state'); writeFileSync(join(evidence, 'last-dom.txt'), await win.locator('body').innerText()); writeFileSync(join(evidence, 'last-html.txt'), await win.locator('.outscaled-agents-host').evaluateAll((elements: Element[]) => elements.map(element => element.outerHTML).join('\n'))); writeFileSync(join(evidence, 'last-proof.json'), JSON.stringify(await proof(), null, 2)); writeFileSync(join(evidence, 'last-bridge.json'), JSON.stringify(await win.evaluate(() => ({ mode: (window as ProbedWindow).__agentsProbe.agents.mode, active: [...(window as ProbedWindow).__agentsProbe.agents.owners].map(([id, owner]) => [id, owner.active]), snapshot: (window as ProbedWindow).__agentsProbe.agents.snapshot, receipt: (window as ProbedWindow).__agentsProbe.agents.receipt(), instances: (window as ProbedWindow).__agentsProbe.terminals.instances.map(instance => ({id:instance.instanceId, disposed:instance.isDisposed, launch:instance.shellLaunchConfig})) })), null, 2)); } catch {} }
 		const copyLogs = (directory: string, prefix = '') => { try { for (const entry of readdirSync(directory, { withFileTypes: true })) {
 			const path = join(directory, entry.name); if (entry.isDirectory()) {copyLogs(path, prefix + entry.name + '-');}
 			else if (entry.name.endsWith('.log')) {writeFileSync(join(evidence, prefix + entry.name), readFileSync(path));}

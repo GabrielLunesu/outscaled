@@ -32,7 +32,7 @@ export class AgentsInput extends EditorInput {
 	override getName(): string { return localize('agents.editor', "Agents"); }
 }
 
-class AgentsEditor extends EditorPane {
+export class AgentsEditor extends EditorPane {
 	static readonly ID = 'outscaled.agentsEditor';
 	private host!: HTMLElement;
 	private owner: WorkspaceTerminals | undefined;
@@ -62,6 +62,10 @@ class AgentsEditor extends EditorPane {
 		this.host.style.width = `${dimension.width}px`;
 		this.host.style.height = `${dimension.height}px`;
 		this.owner?.layout();
+	}
+	revealTerminal(terminal: string): void {
+		if (this.owner?.hasVisiblePane(terminal)) { this.owner.focus(terminal); }
+		else { this.background.openTerminal(terminal); }
 	}
 	override focus(): void { super.focus(); this.owner?.focus(); }
 }

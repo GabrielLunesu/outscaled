@@ -7,6 +7,7 @@
 import { localize } from '../../../../nls.js';
 import { AgentPane, AgentSchedule, AgentsWorkspace } from '../common/agentsBridge.js';
 import { layoutTerminals } from '../common/agentsLayout.js';
+import { agentRequestText, canAnswerAgent } from './agentsWaitingModel.js';
 import { agentStatusLabel } from './agentsSidebarModel.js';
 
 export function agentRuntimeLabel(runtime: AgentPane['runtime'] | 'script'): string {
@@ -35,7 +36,7 @@ function backgroundAgent(workspace: AgentsWorkspace, terminal?: AgentPane, sched
 	const latestLine = terminal?.latestLine ?? schedule?.lastRun?.result.split(/\r?\n/)[0] ?? '';
 	const runtime = agentRuntimeLabel(schedule?.runtime ?? terminal!.runtime);
 	const next = schedule ? schedule.paused ? localize('background.paused', "Paused") : localize('background.next', "Next: {0}", scheduleTime(schedule.nextRunAt)) : '';
-	return { id: schedule ? `schedule:${name}` : `terminal:${terminal!.id}`, name, terminal: terminal?.id, runtime, status, latestLine, schedule, next,
+	return { id: schedule ? `schedule:${name}` : `terminal:${terminal!.id}`, name, terminal: terminal?.id, runtime, status, latestLine, schedule, next, request: terminal ? agentRequestText(terminal) : '', canAnswer: !!terminal && canAnswerAgent(terminal),
 		label: localize('background.label', "{0}, {1}, {2}. {3} {4}", name, runtime, agentStatusLabel(status), latestLine, next),
 		offline: !workspace.online,
 		openReason: !workspace.online ? localize('background.offline', "This workspace is offline.") : schedule?.runtime === 'script' ? localize('background.scriptTerminal', "Scripts run without a terminal.") : !terminal ? localize('background.noTerminal', "A terminal is available after the first run.") : '',

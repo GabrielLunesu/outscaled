@@ -4,17 +4,20 @@
  *--------------------------------------------------------------------------------------------*/
 
 import * as dom from '../../../../base/browser/dom.js';
-import { Disposable } from '../../../../base/common/lifecycle.js';
+import { Disposable, DisposableStore, toDisposable } from '../../../../base/common/lifecycle.js';
 // eslint-disable-next-line local/code-translation-remind
 import { localize } from '../../../../nls.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
+import { IContextViewService } from '../../../../platform/contextview/browser/contextView.js';
 import { SyncDescriptor } from '../../../../platform/instantiation/common/descriptors.js';
 import { registerTitleControl } from '../../../browser/parts/titlebar/titleControlRegistry.js';
+import { AgentsWaitingList } from './agentsWaiting.js';
+import { waitingAgents } from './agentsWaitingModel.js';
 import { IAgentsService } from './agentsService.js';
 
 class AgentsTitleControl extends Disposable {
 	readonly element = dom.$('.outscaled-title-controls');
-	constructor(@IAgentsService agents: IAgentsService, @ICommandService commands: ICommandService) {
+	constructor(@IAgentsService agents: IAgentsService, @ICommandService commands: ICommandService, @IContextViewService context: IContextViewService) {
 		super();
 		const name = dom.append(this.element, dom.$('strong.outscaled-workspace-name'));
 		const branch = dom.append(this.element, dom.$('span.outscaled-workspace-branch'));
@@ -24,12 +27,29 @@ class AgentsTitleControl extends Disposable {
 			return control;
 		};
 		button(this.element, localize('agents.new', "New agents"), () => { void commands.executeCommand('outscaled.agents.new'); });
+		let closeList: (() => void) | undefined;
+		this._register(toDisposable(() => closeList?.()));
 		const needsYou = button(this.element, '', () => {
-			for (const workspace of agents.snapshot.workspaces) {
-				const waiting = workspace.terminals.find(terminal => terminal.status === 'needs_input');
-				if (waiting) { void agents.request({ version: 1, action: 'focus', workspace: workspace.id, terminal: waiting.id }); break; }
-			}
+			if (closeList) { closeList(); return; }
+			let list: AgentsWaitingList | undefined;
+			const view = context.showContextView({ getAnchor: () => needsYou,
+				render: container => {
+					const store = new DisposableStore();
+					list = store.add(new AgentsWaitingList(agents, commands, () => closeList?.()));
+					container.append(list.element);
+					store.add(dom.addDisposableListener(dom.getWindow(container).document, 'mousedown', event => {
+						if (dom.isHTMLElement(event.target) && !list?.element.contains(event.target) && !needsYou.contains(event.target)) { closeList?.(); }
+					}, true));
+					return store;
+				}, focus: () => list?.focus(), onHide: () => {
+					const restoreFocus = list?.element.contains(dom.getActiveElement());
+					closeList = undefined; needsYou.setAttribute('aria-expanded', 'false');
+					if (restoreFocus) { needsYou.focus(); }
+				}
+			});
+			closeList = () => view.close(); needsYou.setAttribute('aria-expanded', 'true');
 		});
+		needsYou.setAttribute('aria-haspopup', 'dialog');
 		needsYou.classList.add('outscaled-needs-you');
 		const modes = dom.append(this.element, dom.$('.outscaled-mode-switch', { role: 'group', 'aria-label': localize('agents.mode', "View Mode") }));
 		const home = button(modes, localize('agents.home', "Agents"), () => { void commands.executeCommand('outscaled.agents.mode', 'agents'); });
@@ -39,7 +59,7 @@ class AgentsTitleControl extends Disposable {
 			name.textContent = workspace?.name ?? localize('agents.product', "Outscaled");
 			branch.textContent = workspace?.branch ?? '';
 			branch.hidden = !workspace?.branch;
-			const count = agents.snapshot.workspaces.reduce((sum, workspace) => sum + workspace.terminals.filter(terminal => terminal.status === 'needs_input').length, 0);
+			const count = waitingAgents(agents.snapshot).length;
 			needsYou.hidden = !count;
 			needsYou.textContent = localize('agents.waiting', "{0} need you", count);
 			home.setAttribute('aria-pressed', String(agents.mode === 'agents'));

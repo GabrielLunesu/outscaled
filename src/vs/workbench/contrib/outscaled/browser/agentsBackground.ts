@@ -49,6 +49,7 @@ class AgentCard extends Disposable {
 	readonly element = dom.$('.outscaled-agent-card', { role: 'dialog', tabindex: '-1' });
 	private readonly title = dom.append(this.element, dom.$('h3'));
 	private readonly status = dom.append(this.element, dom.$('p.outscaled-card-status'));
+	private readonly request = dom.append(this.element, dom.$('p.outscaled-card-request'));
 	private readonly latest = dom.append(this.element, dom.$('p.outscaled-card-latest'));
 	private readonly details = dom.append(this.element, dom.$('dl'));
 	private readonly prompt = this.field(localize('background.prompt', "Prompt"));
@@ -59,6 +60,8 @@ class AgentCard extends Disposable {
 	private readonly editNote = dom.append(this.element, dom.$('p'));
 	private readonly actions = dom.append(this.element, dom.$('.outscaled-card-actions'));
 	private readonly open: HTMLButtonElement;
+	private readonly allow: HTMLButtonElement;
+	private readonly deny: HTMLButtonElement;
 	private readonly run: HTMLButtonElement;
 	private readonly edit: HTMLButtonElement;
 	private readonly pause: HTMLButtonElement;
@@ -83,6 +86,8 @@ class AgentCard extends Disposable {
 			this.close();
 			await this.agents.request({ version: 1, action: 'openInGrid', workspace, terminal, focused: agents.owners.get(workspace)?.active });
 		});
+		this.allow = this.button(this.actions, localize('waiting.allow', "Allow Once"), () => this.answer('allow_once'));
+		this.deny = this.button(this.actions, localize('waiting.deny', "Deny"), () => this.answer('deny'));
 		this.run = this.button(this.actions, localize('background.runNow', "Run Now"), () => this.change('run'));
 		this.edit = this.button(this.actions, localize('background.edit', "Edit"), async () => {
 			this.promptInput.value = this.model.schedule?.prompt ?? ''; this.intervalInput.value = this.model.schedule!.every;
@@ -103,6 +108,7 @@ class AgentCard extends Disposable {
 		this._register(dom.addDisposableListener(this.form, 'submit', event => event.preventDefault()));
 		for (const input of [this.promptInput, this.intervalInput]) { this._register(dom.addDisposableListener(input, 'input', () => this.validate())); }
 		this._register(dom.addDisposableListener(this.element, 'keydown', event => {
+			if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'j') { this.close(); return; }
 			if (event.key === 'Escape') { this.close(); event.preventDefault(); }
 			if (event.key === 'Tab') {
 				const controls = this.controls.filter(control => control.offsetParent !== null && (!dom.isHTMLButtonElement(control) || !control.disabled));
@@ -121,6 +127,9 @@ class AgentCard extends Disposable {
 		this._register(dom.addDisposableListener(button, 'click', () => { if (!button.disabled && !this.busy) { void run(); } })); return button;
 	}
 	private validate(): void { this.save.disabled = this.busy || this.model.offline || !this.promptInput.value.trim() || !isLaunchInterval(this.intervalInput.value); }
+	private answer(answer: 'allow_once' | 'deny'): Promise<void> {
+		return this.send({ version: 1, action: 'answer', workspace: this.workspace, terminal: this.model.terminal!, answer });
+	}
 	private change(operation: 'run' | 'pause' | 'resume' | 'delete'): Promise<void> { return this.send({ version: 1, action: 'schedule', workspace: this.workspace, name: this.model.name, operation }); }
 	private async send(request: AgentsRequest): Promise<void> {
 		if (this.busy) { return; } this.busy = true; this.error.textContent = ''; this.update(this.model);
@@ -134,6 +143,8 @@ class AgentCard extends Disposable {
 	update(model: BackgroundAgent): void {
 		this.model = model; this.element.setAttribute('aria-label', model.name); this.element.dataset.status = model.status;
 		this.title.textContent = model.name; this.status.textContent = localize('background.cardStatus', "{0} · {1}", model.runtime, agentStatusLabel(model.status));
+		this.request.textContent = model.request; this.request.hidden = !model.request;
+		for (const button of [this.allow, this.deny]) { button.hidden = !model.canAnswer; button.disabled = this.busy || model.offline; }
 		this.latest.textContent = model.latestLine || localize('background.noOutput', "No output yet.");
 		const schedule = model.schedule; this.details.hidden = !schedule;
 		this.open.disabled = this.busy || !!model.openReason;
@@ -178,6 +189,10 @@ export class AgentsBackground extends Disposable {
 			event.preventDefault(); event.stopPropagation();
 		}));
 		this.update();
+	}
+	openTerminal(terminal: string): void {
+		const chip = [...this.chips.values()].find(chip => chip.model.terminal === terminal);
+		if (chip) { chip.element.scrollIntoView({ block: 'nearest', inline: 'nearest' }); this.showCard(chip); }
 	}
 	close(): void { this.closeCard?.(); }
 	private tabStops(): void { for (const [id, chip] of this.chips) { chip.element.tabIndex = id === this.focused ? 0 : -1; } this.list.tabIndex = this.chips.size ? -1 : 0; }

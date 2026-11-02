@@ -18,12 +18,13 @@ import { AgentsLaunch, insertLaunch, launchLayout } from '../../../../src/vs/wor
 import { planLaunch } from './launch';
 import { changeSchedule, createSchedules } from './schedules';
 import { agentsSnapshot } from './mapping';
+import { answerTerminal } from './answers';
 
 /** Read-only subset of the built-in Git extension's v1 API. */
 interface GitExtension { enabled: boolean; getAPI(version: 1): { repositories: readonly { rootUri: vscode.Uri; state: { HEAD: { name?: string } | undefined } }[] } }
 
 const pendingKey = 'outscaled.pendingGridOpen';
-type OpenRequest = { kind: 'preset'; workspace: WorkspaceLocation; preset: string } | { kind: 'focus'; workspace: WorkspaceLocation; name: string; focused?: string };
+type OpenRequest = { kind: 'preset'; workspace: WorkspaceLocation; preset: string } | { kind: 'focus'; workspace: WorkspaceLocation; name: string; focused?: string; openInGrid?: boolean };
 
 /** Extension-owned daemon operations; core alone owns the live terminal clients. */
 export class TerminalGrid implements vscode.Disposable {
@@ -82,7 +83,13 @@ export class TerminalGrid implements vscode.Disposable {
 						else {
 							const terminal = workspace.terminals.find(terminal => terminal.id === value.terminal);
 							if (!terminal) {throw new Error(vscode.l10n.t('Terminal is unavailable'));}
-							await this.open({ kind: 'focus', workspace: location, name: terminal.name, focused: value.action === 'openInGrid' ? value.focused : undefined });
+							if (value.action === 'answer') {
+								const outcome = await answerTerminal(this.service, location, terminal.name, value.answer,
+									() => this.open({ kind: 'focus', workspace: location, name: terminal.name }),
+									message => { void vscode.window.showInformationMessage(message); });
+								return { version: 1, ok: true, jumped: outcome === 'jumped' };
+							}
+							await this.open({ kind: 'focus', workspace: location, name: terminal.name, openInGrid: value.action === 'openInGrid', focused: value.action === 'openInGrid' ? value.focused : undefined });
 						}
 					}
 					return { version: 1, ok: true };
@@ -149,7 +156,7 @@ export class TerminalGrid implements vscode.Disposable {
 				focus = (await listTerminals(this.service, request.workspace)).find(terminal => terminal.name === request.name)?.id;
 				if (!focus) {throw new Error(vscode.l10n.t('This terminal is unavailable'));}
 				const tree = this.memory.recall(request.workspace) ?? presetLayout('single', []);
-				this.memory.remember(request.workspace, openGridPane(tree, focus, request.focused));
+				if (request.openInGrid) { this.memory.remember(request.workspace, openGridPane(tree, focus, request.focused)); }
 			}
 			await this.service.synchronize(request.workspace.host);
 			await this.publish(focus ? { workspace: workspaceKey(request.workspace), terminal: focus } : undefined);
