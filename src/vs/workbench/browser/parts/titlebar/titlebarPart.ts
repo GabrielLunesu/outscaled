@@ -30,6 +30,7 @@ import { IContextKey, IContextKeyService } from '../../../../platform/contextkey
 import { IHostService } from '../../../services/host/browser/host.js';
 import { WindowTitle } from './windowTitle.js';
 import { CommandCenterControl } from './commandCenterControl.js';
+import { getTitleControl } from './titleControlRegistry.js';
 import { Categories } from '../../../../platform/action/common/actionCommonCategories.js';
 import { HiddenItemStrategy, MenuWorkbenchToolBar, WorkbenchToolBar } from '../../../../platform/actions/browser/toolbar.js';
 import { IActionViewItemService } from '../../../../platform/actions/browser/actionViewItemService.js';
@@ -632,7 +633,9 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 
 		// Menu Title
 		else {
-			const commandCenter = this.instantiationService.createInstance(CommandCenterControl, this.windowTitle, this.hoverDelegate);
+			const descriptor = getTitleControl();
+			const commandCenter = descriptor ? this.instantiationService.createInstance(descriptor)
+				: this.instantiationService.createInstance(CommandCenterControl, this.windowTitle, this.hoverDelegate);
 			reset(this.title, commandCenter.element);
 			this.titleDisposables.add(commandCenter);
 		}
@@ -895,11 +898,11 @@ export class BrowserTitlebarPart extends Part implements ITitlebarPart {
 	}
 
 	private get layoutControlEnabled(): boolean {
-		return this.configurationService.getValue<boolean>(LayoutSettings.LAYOUT_ACTIONS) !== false;
+		return !getTitleControl() && this.configurationService.getValue<boolean>(LayoutSettings.LAYOUT_ACTIONS) !== false;
 	}
 
 	protected get isCommandCenterVisible() {
-		return !this.isCompact && this.configurationService.getValue<boolean>(LayoutSettings.COMMAND_CENTER) !== false;
+		return !this.isCompact && (!!getTitleControl() || this.configurationService.getValue<boolean>(LayoutSettings.COMMAND_CENTER) !== false);
 	}
 
 	private get editorActionsEnabled(): boolean {
