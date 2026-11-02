@@ -55,6 +55,33 @@ test("latest line is trimmed, single-line, bounded, and ignores blank lines and 
   expect(latestLine("x".repeat(300))).toHaveLength(200);
 });
 
+// The tmux adapter supplies only rows above the cursor and joins wraps. These
+// unit cases check selection and null updates without consulting a full screen.
+for (const { name, captured, expected } of [
+  { name: "prompt on the cursor row", captured: "old\nLAST_OUTPUT\n", expected: "LAST_OUTPUT" },
+  { name: "multi-line prompt", captured: "LAST_OUTPUT\ncontext\n", expected: "context" },
+  { name: "full screen", captured: "line-7\nline-8\nline-9\nline-10\nline-11\n", expected: "line-11" },
+  { name: "empty screen", captured: "", expected: null },
+  { name: "blank rows above the cursor", captured: "\n \n", expected: null },
+  { name: "wrapped output", captured: `old\n${"x".repeat(35)}\n`, expected: "x".repeat(35) },
+]) {
+  test(`shell line choice: ${name}`, async () => {
+    const state = new State(":memory:");
+    const tmux = new Tmux("unused-test-socket");
+    tmux.captureShellScreen = async () => captured;
+    tmux.captureScreen = async () => { throw new Error("Shell line selection must not use the prompt row"); };
+    const terminals = new Terminals(state, tmux);
+    state.insertWorkspace(workspace);
+    state.insertTerminal({ ...terminal, latestLine: "previous output" });
+    try {
+      await terminals.refreshScreen(state.getTerminal(terminal.id)!, {
+        pid: 10, pane: "%0", outputGeneration: 0, windowActivity: 10,
+      } as TmuxPane);
+      expect(state.getTerminal(terminal.id)?.latestLine).toBe(expected);
+    } finally { await terminals.stop(); state.close(); }
+  });
+}
+
 test("transcript reads only the bounded tail, ignores partial records and non-text entries", async () => {
   const f = fixture();
   try {
@@ -117,7 +144,8 @@ test("screen fallback reads at most once a second after output, including a trai
   const state = new State(":memory:");
   const tmux = new Tmux("unused-test-socket");
   let reads = 0;
-  tmux.captureScreen = async () => `screen ${++reads}`;
+  tmux.captureShellScreen = async () => `screen ${++reads}`;
+  tmux.captureScreen = async () => { throw new Error("Shells must capture above the cursor"); };
   const terminals = new Terminals(state, tmux);
   const pane = { pid: 10, pane: "%0", outputGeneration: 0, windowActivity: 10 } as TmuxPane;
   state.insertWorkspace(workspace); state.insertTerminal(terminal);
@@ -142,6 +170,7 @@ for (const runtime of ["claude-code", "codex"] as const) {
     const state = new State(":memory:");
     const tmux = new Tmux("unused-test-socket");
     let reads = 0;
+    tmux.captureShellScreen = async () => { throw new Error("Agents must not sample shell output"); };
     tmux.captureScreen = async () => { reads++; return promptFixture("edit"); };
     const terminals = new Terminals(state, tmux);
     const pane = { pid: 10, pane: "%0", outputGeneration: 0, windowActivity: 10 } as TmuxPane;

@@ -551,8 +551,12 @@ Terminal records (both GET terminal lists and `ws term ls --json`) include:
   A newer hook cancels pending reads so an older transcript cannot replace its
   line. Agent latest lines stay null until agent text arrives; TUI footers are
   never used. Upgrading clears previously stored screen-derived agent lines.
-  Shells sample the visible pane's last non-blank line after output at most once
-  per second.
+  Shells sample the visible pane's last non-blank line above the cursor's row
+  after output at most once per second. This skips the current prompt row, so
+  a completed command keeps its last output line. If nothing non-blank is above
+  the cursor, the line is null. Earlier rows of a multi-line prompt still count;
+  no prompt text is recognised or removed. Wrapped output rows are joined after
+  excluding the cursor row. Scrollback and rows below the cursor are not used.
 
 Latest-line changes emit the live-only message
 `{type: "terminal.latest_line", workspace, terminal, payload: {latestLine}}`.
