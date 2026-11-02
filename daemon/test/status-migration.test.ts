@@ -38,7 +38,7 @@ test("version-1 state upgrades with derived runtimes, unknown statuses and prese
   let state: State | undefined;
   try {
     state = new State(path);
-    expect(state.db.query("PRAGMA user_version").get()).toEqual({ user_version: 3 });
+    expect(state.db.query("PRAGMA user_version").get()).toEqual({ user_version: 4 });
     expect(state.getWorkspace("demo")).toEqual(workspace);
     for (const [id, runtime] of [["c1", "claude-code"], ["c2", "claude-code"], ["x1", "codex"], ["shell", null], ["other", null]]) {
       expect(state.getTerminal(id!)!).toMatchObject({ runtime, status: null, statusChangedAt: null, state: "running", pid: 123, restarts: 3 });
@@ -52,4 +52,22 @@ test("version-1 state upgrades with derived runtimes, unknown statuses and prese
     state?.close();
     f.cleanup();
   }
+});
+
+test("version-3 schedules acquire workspace source and an unpaused default without losing clocks or config", () => {
+  const f = fixture();
+  const old = new Database(`${f.root}/v3.db`, { create: true });
+  const config = { name: "review", mode: "scheduled", runtime: "codex", every: "10m", prompt: "review.md" } as const;
+  old.exec(`CREATE TABLE workspaces (slug TEXT PRIMARY KEY);
+    INSERT INTO workspaces VALUES ('demo');
+    CREATE TABLE schedules (workspace TEXT, agent TEXT, config TEXT, firstSeenAt TEXT, lastStartedAt TEXT, nextDueAt TEXT,
+      PRIMARY KEY (workspace, agent));
+    PRAGMA user_version = 3;`);
+  old.query("INSERT INTO schedules VALUES (?, ?, ?, ?, ?, ?)").run("demo", "review", JSON.stringify(config), workspace.createdAt, null, "2026-01-01T00:10:00.000Z");
+  old.close();
+  const state = new State(`${f.root}/v3.db`);
+  try {
+    expect(state.listSchedules("demo")).toEqual([{ workspace: "demo", agent: "review", config,
+      firstSeenAt: workspace.createdAt, lastStartedAt: null, nextDueAt: "2026-01-01T00:10:00.000Z", source: "workspace", paused: false }]);
+  } finally { state.close(); f.cleanup(); }
 });

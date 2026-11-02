@@ -179,7 +179,7 @@ test("startup marks unfinished runs interrupted and records a finished event", a
   expect(state.listEvents().find(e => e.type === "run.finished")!.payload).toMatchObject({ status: "interrupted", error: true });
 });
 
-for (const runtime of ["claude-code", "codex", "script"]) {
+for (const runtime of ["script"]) {
   test(`${runtime} uses login shell, argv data, /dev/null stdin, state log and run events`, async () => {
     writeConfig(config(runtime));
     if (runtime === "script") { env.CODE = "7"; env.NOISY = "1"; }

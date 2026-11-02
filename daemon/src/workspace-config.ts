@@ -6,14 +6,14 @@ export function intervalMs(every: string): number {
   return Number(every.slice(0, -1)) * ({ s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[every.at(-1)!]!);
 }
 
-export function parseWorkspaceConfig(text: string): { agents: ScheduledAgent[]; errors: string[] } {
+export function parseWorkspaceConfig(text: string): { agents: ScheduledAgent[]; errors: string[]; names: string[] } {
   const agents: ScheduledAgent[] = [];
   const errors: string[] = [];
   let file: Record<string, unknown>;
   try { file = Bun.TOML.parse(text) as Record<string, unknown>; }
-  catch { return { agents, errors: ["invalid workspace.toml"] }; }
-  if (file.agent === undefined) return { agents, errors };
-  if (!Array.isArray(file.agent)) return { agents, errors: ["agent must be an array of tables"] };
+  catch { return { agents, names: [], errors: ["invalid workspace.toml"] }; }
+  if (file.agent === undefined) return { agents, errors, names: [] };
+  if (!Array.isArray(file.agent)) return { agents, names: [], errors: ["agent must be an array of tables"] };
   // Names belong to the workspace, including entries in other modes.
   const names = new Map<unknown, number>();
   for (const entry of file.agent) {
@@ -28,7 +28,7 @@ export function parseWorkspaceConfig(text: string): { agents: ScheduledAgent[]; 
     else if (names.get(parsed.data.name)! > 1) errors.push(`agent[${index}]: duplicate name ${parsed.data.name}`);
     else agents.push(parsed.data);
   }
-  return { agents, errors };
+  return { agents, errors, names: [...names.keys()].filter((name): name is string => typeof name === "string") };
 }
 
 export async function promptFile(workspacePath: string, prompt: string): Promise<string> {
@@ -46,7 +46,7 @@ export async function readWorkspaceConfig(path: string): Promise<ReturnType<type
   let text: string;
   try { text = await readFile(join(path, ".ws/workspace.toml"), "utf8"); }
   catch (error) {
-    return { agents: [], errors: (error as NodeJS.ErrnoException).code === "ENOENT" ? [] : ["cannot read workspace.toml"] };
+    return { agents: [], names: [], errors: (error as NodeJS.ErrnoException).code === "ENOENT" ? [] : ["cannot read workspace.toml"] };
   }
   const parsed = parseWorkspaceConfig(text);
   const agents: ScheduledAgent[] = [];
@@ -58,5 +58,5 @@ export async function readWorkspaceConfig(path: string): Promise<ReturnType<type
       parsed.errors.push(`${agent.name}: prompt must be an existing file inside .ws/`);
     }
   }
-  return { agents, errors: parsed.errors };
+  return { agents, names: parsed.names, errors: parsed.errors };
 }

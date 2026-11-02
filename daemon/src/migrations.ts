@@ -56,6 +56,14 @@ const migrations = [
     status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed', 'interrupted'))
   );
   CREATE INDEX runs_workspace_started ON runs(workspace, startedAt DESC);`,
+  `ALTER TABLE schedules ADD COLUMN source TEXT NOT NULL DEFAULT 'workspace' CHECK (source IN ('workspace', 'app'));
+  ALTER TABLE schedules ADD COLUMN paused INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0, 1));
+  CREATE TABLE scheduled_terminals (
+    workspace TEXT NOT NULL REFERENCES workspaces(slug),
+    agent TEXT NOT NULL,
+    terminal TEXT NOT NULL,
+    PRIMARY KEY (workspace, agent)
+  );`,
 ];
 
 export function migrate(db: Database): void {

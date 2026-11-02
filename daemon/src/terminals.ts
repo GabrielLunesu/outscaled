@@ -134,11 +134,16 @@ export class Terminals {
     return result;
   }
 
-  open(workspace: Workspace, request: OpenTerminalRequest): Promise<Terminal> {
+  open(workspace: Workspace, request: OpenTerminalRequest, scheduled = false, started?: (terminal: Terminal) => void): Promise<Terminal> {
     return this.serial(async () => {
       const session = `ws-${workspace.slug}-${request.name}`;
       const conflict = () => new TerminalConflict(`Terminal session ${session} is already running`);
-      if (await this.tmux.hasSession(session)) throw conflict();
+      const previous = this.state.listTerminals(workspace.slug).find(t => t.name === request.name);
+      const owns = previous && this.state.ownsScheduledTerminal(workspace.slug, request.name, previous.id);
+      if (scheduled && previous && !owns) throw conflict();
+      if (!scheduled && this.state.listSchedules(workspace.slug).some(s => s.agent === request.name)) throw conflict();
+      const exists = await this.tmux.hasSession(session);
+      if (exists && !(scheduled && owns)) throw conflict();
       const shell = process.env.SHELL || userInfo().shell || "/bin/sh";
       const id = crypto.randomUUID();
       const command = request.command ?? shell;
@@ -158,9 +163,10 @@ export class Terminals {
       }
       let pid: number;
       try {
-        pid = await this.tmux.createSession(session, workspace.path, shell, launchCommand, request.alwaysOn, {
-          WSD_TERMINAL: id, WSD_PORT: String(this.launch?.port ?? 7770),
-        });
+        const env = { WSD_TERMINAL: id, WSD_PORT: String(this.launch?.port ?? 7770) };
+        pid = scheduled && exists
+          ? await this.tmux.freshSession(session, workspace.path, shell, launchCommand!, env)
+          : await this.tmux.createSession(session, workspace.path, shell, launchCommand, scheduled || request.alwaysOn, env);
       } catch (error) {
         // Another client may have created the session since has-session.
         if (await this.tmux.hasSession(session)) throw conflict();
@@ -176,9 +182,12 @@ export class Terminals {
             runtime, status: null, statusChangedAt: null,
             state: "running", restarts: 0, pid, createdAt,
           });
+          if (scheduled) this.state.ownScheduledTerminal(workspace.slug, request.name, id);
           // All transitions, including the initial starting status, emit events.
           // Hooks share this lifecycle lock so SessionStart cannot race the row.
-          return runtime ? this.state.updateTerminalStatus(id, "starting")! : this.state.getTerminal(id)!;
+          const terminal = runtime ? this.state.updateTerminalStatus(id, scheduled ? "working" : "starting")! : this.state.getTerminal(id)!;
+          started?.(terminal);
+          return terminal;
         })();
       } catch (error) {
         // Do not leave an untracked process behind if persistence fails.

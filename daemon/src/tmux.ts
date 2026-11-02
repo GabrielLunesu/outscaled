@@ -77,24 +77,41 @@ export class Tmux {
     // Multiple command arguments make tmux exec the shell directly, without an
     // extra shell interpreting the user's command or paths a second time.
     const args = [shell, "-l", ...(command === undefined ? [] : ["-c", `exec ${command}`])];
-    const pid = await this.run([
-      "new-session", "-d", "-s", name, "-c", folder, "-P", "-F", "#{pane_pid}",
+    await this.run([
+      "new-session", "-d", "-s", name, "-c", folder,
       ...Object.entries(env).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
-      // Hold the pane open until its local option is set, even for commands
-      // that exit immediately. Never change tmux's global defaults.
-      ...(alwaysOn ? ["/bin/sleep", "600"] : args),
+      "/bin/sleep", "600",
     ]);
-    if (alwaysOn) {
-      try {
-        await this.retainPane(name);
-        await this.run(["respawn-pane", "-k", "-t", `=${name}:`, "-c", folder, ...args]);
-        return this.panePid(await this.run(["display-message", "-p", "-t", `=${name}:`, "#{pane_pid}"]));
-      } catch (error) {
-        await this.killSession(name);
-        throw error;
-      }
+    try {
+      // focus-events is a server option, even on the default socket. Set it
+      // before starting the agent; this also enables it for other sessions.
+      await this.run(["set-option", "-s", "focus-events", "on"]);
+      if (alwaysOn) await this.retainPane(name);
+      return this.panePid(await this.run([
+        "respawn-pane", "-k", "-t", `=${name}:`, "-c", folder, ...args,
+        ";", "display-message", "-p", "-t", `=${name}:`, "#{pane_pid}",
+      ]));
+    } catch (error) {
+      await this.killSession(name);
+      throw error;
     }
-    return this.panePid(pid);
+  }
+
+  async freshSession(name: string, folder: string, shell: string, command: string, env: Record<string, string>): Promise<number> {
+    const target = `=${name}:`;
+    // Stop the old process before resetting the screen and scrollback, then
+    // start a new process with a new hook identity in the same retained pane.
+    await this.retainPane(name);
+    await this.run(["respawn-pane", "-k", "-t", target, "/bin/sleep", "600"]);
+    await this.run(["send-keys", "-R", "-t", target]);
+    await this.run(["clear-history", "-t", target]);
+    await this.run(["set-option", "-s", "focus-events", "on"]);
+    return this.panePid(await this.run([
+      "respawn-pane", "-k", "-t", target, "-c", folder,
+      ...Object.entries(env).flatMap(([key, value]) => ["-e", `${key}=${value}`]),
+      shell, "-l", "-c", `exec ${command}`,
+      ";", "display-message", "-p", "-t", target, "#{pane_pid}",
+    ]));
   }
 
   private panePid(pid: string): number {
@@ -110,8 +127,10 @@ export class Tmux {
   async respawnPane(pane: string, folder: string): Promise<number> {
     // Omitting the command reuses the exact original argv, including the
     // login shell and its quoting. Without -k we cannot kill a live process.
-    await this.run(["respawn-pane", "-t", pane, "-c", folder]);
-    return this.panePid(await this.run(["display-message", "-p", "-t", pane, "#{pane_pid}"]));
+    return this.panePid(await this.run([
+      "respawn-pane", "-t", pane, "-c", folder,
+      ";", "display-message", "-p", "-t", pane, "#{pane_pid}",
+    ]));
   }
 
   async listPanes(): Promise<TmuxPane[]> {

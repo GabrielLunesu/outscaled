@@ -278,6 +278,11 @@ code and does not accept `--json`.
 Remote behavior is covered by isolated fake-SSH tests and has been verified on
 a real Linux VPS, including cloning, in-place registration and terminal access.
 
+wsd enables tmux's `focus-events` **server option** before starting a terminal's
+command, including on the default socket. It therefore also enables focus events
+for other sessions on that same tmux server; no `~/.tmux.conf` is edited. The
+private `WSD_TMUX_SOCKET` limits the effect to that socket's server.
+
 Terminals run on tmux's default socket, so `tmux attach -t ws-<workspace>-<name>` or herdr can attach to them. They keep running when wsd stops, and wsd re-adopts them when it starts. When an `--always-on` terminal's process dies, wsd restarts the same command in the same pane after 1 s, 5 s, 30 s, then every 5 min; after five quick failures in a row it marks the terminal `crashed` and stops.
 
 ## Scheduled agents
@@ -309,17 +314,72 @@ next due time, that execution is skipped and the next check is an interval later
 Changing an interval recalculates its due time from the last start (or first
 discovery); removing a schedule cancels future executions and retains its runs.
 
-Each execution runs in the workspace through `$SHELL -l -c` (falling back to
-`/bin/sh`), with stdin from `/dev/null`. Claude runs `claude -p <prompt>` and
-Codex runs `codex exec <prompt>`; prompt text is passed as data. Both output
-streams go directly to `<state dir>/logs/<workspace>/<agent>/<run-id>.log`.
-Runs record start/end time, exit code and `running`, `succeeded`, `failed` or
-`interrupted` status. Non-zero exits produce an error in the `run.finished`
-event. wsd stores `run.started` and `run.finished` events in SQLite.
+Claude Code and Codex schedules run interactively in the agent's own terminal,
+`ws-<workspace>-<name>`, visible through the ordinary terminal API, grid and
+herdr. Each run replaces the previous process with a fresh login-shell launch,
+clears the screen and scrollback, and supplies the prompt as one safely quoted
+initial argument (after `--`). Claude receives wsd's `--settings` hooks and Codex
+receives its notify override, exactly like other agent terminals. Neither runs
+in headless mode, and neither resumes earlier context. The tmux pane is reused;
+each process gets a new terminal id so late hooks cannot finish a newer run.
 
-Graceful shutdown stops polling and terminates active scheduled processes;
-unfinished runs from a previous daemon are marked interrupted on startup.
-Always-on and one-off entries in workspace.toml are not launched yet.
+Runs start `working`. Claude's Stop hook or Codex's turn-complete notify marks
+the terminal idle and finishes the run successfully. Claude's SessionStart idle
+is ignored during a scheduled run. `needs_input` leaves the run active until you
+answer it and the agent completes. At completion, the entire retained tmux
+scrollback is captured to `<state dir>/logs/<workspace>/<agent>/<run-id>.log`.
+The live terminal keeps showing the completed session until its next run. If the
+process dies before completion, its retained pane is captured and the run fails.
+Log retention is bounded by tmux's configured history limit, as for any terminal.
+
+Scripts keep running headless through `$SHELL -l -c` (falling back to `/bin/sh`),
+with stdin from `/dev/null` and both output streams going directly to the log.
+Runs record start/end time, exit code and `running`, `succeeded`, `failed` or
+`interrupted` status. wsd stores `run.started` and `run.finished` events in SQLite;
+terminal status events still fire normally. Non-zero script exits and agent
+process deaths produce an error in `run.finished`.
+
+Graceful shutdown stops polling, terminates active scripts, and captures and
+marks active terminal runs interrupted. Interactive tmux sessions survive wsd
+like ordinary terminals. Unfinished runs from an unclean daemon shutdown are
+marked interrupted on startup. Always-on and one-off entries in workspace.toml
+are not launched yet.
+
+### Schedule API
+
+App-created schedules live only in wsd's state database, with inline prompt
+text. Workspace schedules remain in `.ws/workspace.toml` and prompt files;
+wsd never writes either. Both are listed by the API. Agent names share the
+workspace's slug rules and cannot collide with another schedule, terminal or
+workspace.toml agent (including another mode). If a later workspace edit uses
+an existing app schedule's name, wsd keeps the app schedule and logs a warning.
+
+All paths below are relative to `/v1/workspaces/:ws/schedules`:
+
+| Method | Path | Request / response |
+| --- | --- | --- |
+| GET | (base) | Array of `ScheduleSummary` |
+| POST | (base) | `{name, runtime: "claude-code" \| "codex", every, prompt}` → summary, 201 |
+| PATCH | `/:name` | `{every?, prompt?}` (at least one) → summary; app schedules only |
+| DELETE | `/:name` | 204; app schedules only; leaves any active run, terminal, logs and history intact |
+| POST | `/:name/run` | Run Now → `Run`, 201; also allowed while paused |
+| POST | `/:name/pause` | Summary; suppress future automatic runs, without interrupting the current run |
+| POST | `/:name/resume` | Summary; restart the clock one interval from resume |
+
+`ScheduleSummary` contains `workspace`, `name`, `source` (`app` or `workspace`),
+`readOnly`, `runtime`, `every`, `prompt` (resolved text; null for scripts),
+`command` (scripts only, otherwise null), `paused`, `lastRun` and `nextRunAt`.
+`lastRun` is null or `{id, startedAt, endedAt, status, result}`, where `result`
+is the first line of the saved terminal output or script log (empty if not yet
+available). `nextRunAt` is null while paused. Pause state survives restarts for
+both sources. Interval edits recalculate from the last run start or discovery.
+Run Now resets the next due time to one interval from its start, and preserves
+pause state. Repeated pause/resume calls are idempotent.
+
+Invalid names, intervals and bodies return 400; missing workspaces or schedules
+return 404. Duplicate names, Run Now while a run is active, and PATCH/DELETE of
+workspace schedules return 409. Create and PATCH reject unknown fields. The API
+exports its request and summary schemas from `@outscaled/protocol`.
 
 ```sh
 ws run ls demo
