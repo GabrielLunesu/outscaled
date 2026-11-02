@@ -363,7 +363,7 @@ scripts/serial.sh                    one build or full test suite at a time
 - [x] A pane's menu, ⌘D or ⌥⌘D adds Claude or Codex to its right or below, and Move to Background (⌘M) takes a pane out of the grid while its agent keeps running.
 - [x] The background strip shows every agent not in the grid with its status dot and latest line, updating live, and clicking one opens it in the grid. A scheduled agent's card shows its prompt, last run and next run, and Run Now starts a run.
 - [x] Each scheduled run starts a fresh Claude Code or Codex session in a real terminal that you can open in the grid, and its output is kept as the run's log.
-- [ ] A waiting agent turns its pane red with its request, badges its workspace and counts in the title bar. ⌘J jumps to it from any workspace, and Allow Once or Deny in the needs-you list answers a Claude Code permission prompt without opening the pane.
+- [x] A waiting agent turns its pane red with its request, badges its workspace and counts in the title bar. ⌘J jumps to it from any workspace, and Allow Once or Deny in the needs-you list answers a Claude Code permission prompt without opening the pane.
 - [ ] Changes, in the title bar with a count, lists each changed file with the agent that changed it and opens its diff in one click. Code mode shows the explorer, editors, search and source control for the workspace, and Agents brings the grid back as it was.
 - [ ] Focus (switched with Grid / Focus in the title bar) and the All agents board work, and each workspace remembers its layout, which agents are in the grid or the background, and its mode, after switching workspace and after restarting the app.
 
