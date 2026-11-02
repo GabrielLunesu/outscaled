@@ -5,7 +5,7 @@
 
 import { AgentsLayout, isAgentsLayout, layoutTerminals } from './agentsLayout.js';
 
-import { AgentsLaunch, AgentsPreset, isAgentsLaunch } from './agentsLaunch.js';
+import { AgentsLaunch, AgentsPreset, isAgentsLaunch, isLaunchInterval } from './agentsLaunch.js';
 
 export const agentsBridgeVersion = 1;
 export const agentsPublishCommand = '_outscaled.agents.publish';
@@ -15,11 +15,19 @@ export type AgentsMode = 'agents' | 'code';
 export type AgentStatus = 'idle' | 'working' | 'needs_input' | 'crashed';
 export interface AgentPane {
 	id: string; name: string; runtime: 'claude-code' | 'codex' | 'shell'; status: AgentStatus;
+	latestLine?: string | null;
 	launch?: { executable: string; args: string[]; env: Record<string, string> };
+}
+/** Schedule summaries are data only; daemon connections and mutations stay in the extension. */
+export interface AgentSchedule {
+	workspace: string; name: string; source: 'app' | 'workspace'; readOnly: boolean;
+	runtime: 'claude-code' | 'codex' | 'script'; every: string; prompt: string | null; command: string | null;
+	paused: boolean; nextRunAt: string | null;
+	lastRun: { id: string; startedAt: string; endedAt: string | null; status: 'running' | 'succeeded' | 'failed' | 'interrupted'; result: string } | null;
 }
 export interface AgentsWorkspace {
 	id: string; name: string; server: string; root: string; selected: boolean; online: boolean; branch?: string; path?: string;
-	terminals: AgentPane[]; layout: AgentsLayout;
+	terminals: AgentPane[]; schedules?: AgentSchedule[]; layout: AgentsLayout;
 }
 export interface AgentsSnapshot { version: 1; workspaces: AgentsWorkspace[]; focus?: { workspace: string; terminal: string } }
 export type AgentsRequest = { version: 1; action: 'newAgents' } |
@@ -29,6 +37,9 @@ export type AgentsRequest = { version: 1; action: 'newAgents' } |
 	{ version: 1; action: 'switch'; workspace: string } |
 	{ version: 1; action: 'background'; workspace: string; terminal: string; focused?: string } |
 	{ version: 1; action: 'resize'; workspace: string; layout: AgentsLayout } |
+	{ version: 1; action: 'openInGrid'; workspace: string; terminal: string; focused?: string } |
+	{ version: 1; action: 'schedule'; workspace: string; name: string; operation: 'run' | 'pause' | 'resume' | 'delete' } |
+	{ version: 1; action: 'editSchedule'; workspace: string; name: string; prompt: string; every: string } |
 	{ version: 1; action: 'focus'; workspace: string; terminal: string };
 export interface AgentsReceipt {
 	version: 1; ok: boolean; error?: string; presets?: AgentsPreset[];
@@ -40,10 +51,23 @@ function record(value: unknown): value is Record<string, unknown> { return typeo
 function pane(value: unknown): value is AgentPane {
 	if (!record(value) || !text(value.id) || !text(value.name) || (typeof value.runtime !== 'string' || !['claude-code', 'codex', 'shell'].includes(value.runtime)) ||
 		(typeof value.status !== 'string' || !['idle', 'working', 'needs_input', 'crashed'].includes(value.status))) { return false; }
+	if (value.latestLine !== undefined && value.latestLine !== null && (typeof value.latestLine !== 'string' || !value.latestLine.length || value.latestLine.length > 200 || value.latestLine !== value.latestLine.trim() || /[\r\n]/.test(value.latestLine))) { return false; }
 	const launch = value.launch;
 	return launch === undefined || (record(launch) && text(launch.executable) && Array.isArray(launch.args) &&
 		launch.args.length <= 32 && launch.args.every(arg => typeof arg === 'string') && record(launch.env) &&
 		Object.entries(launch.env).every(([key, value]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key) && typeof value === 'string'));
+}
+
+function timestamp(value: unknown): boolean { return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value) && Number.isFinite(Date.parse(value)); }
+function nullableText(value: unknown): boolean { return value === null || typeof value === 'string'; }
+function schedule(value: unknown): value is AgentSchedule {
+	if (!record(value) || !text(value.workspace) || !text(value.name) || (typeof value.source !== 'string' || !['app', 'workspace'].includes(value.source)) ||
+		typeof value.readOnly !== 'boolean' || value.readOnly !== (value.source === 'workspace') ||
+		(typeof value.runtime !== 'string' || !['claude-code', 'codex', 'script'].includes(value.runtime)) || typeof value.every !== 'string' || !/^[1-9]\d*[smhd]$/.test(value.every) ||
+		!nullableText(value.prompt) || !nullableText(value.command) || typeof value.paused !== 'boolean' || !(value.nextRunAt === null || timestamp(value.nextRunAt))) { return false; }
+	const run = value.lastRun;
+	return run === null || (record(run) && text(run.id) && timestamp(run.startedAt) && (run.endedAt === null || timestamp(run.endedAt)) &&
+		typeof run.status === 'string' && ['running', 'succeeded', 'failed', 'interrupted'].includes(run.status) && typeof run.result === 'string');
 }
 
 /** The command transport crosses the extension host boundary; reject malformed whole messages. */
@@ -56,6 +80,8 @@ export function isAgentsSnapshot(value: unknown): value is AgentsSnapshot {
 			!text(workspace.root) || !/^(file|ws):/.test(workspace.root) || typeof workspace.selected !== 'boolean' || typeof workspace.online !== 'boolean' ||
 			(workspace.branch !== undefined && !text(workspace.branch)) || (workspace.path !== undefined && !text(workspace.path)) || !Array.isArray(workspace.terminals) || workspace.terminals.length > 4096 ||
 			!workspace.terminals.every(pane) || !isAgentsLayout(workspace.layout)) { return false; }
+		if (workspace.schedules !== undefined && (!Array.isArray(workspace.schedules) || workspace.schedules.length > 4096 || !workspace.schedules.every(schedule) ||
+			new Set(workspace.schedules.map(schedule => schedule.name)).size !== workspace.schedules.length)) { return false; }
 		ids.add(workspace.id);
 		if (workspace.selected) { selected++; }
 		const terminals = new Set(workspace.terminals.map(terminal => terminal.id));
@@ -75,6 +101,9 @@ export function isAgentsRequest(value: unknown): value is AgentsRequest {
 		(value.action === 'presets' && text(value.workspace)) ||
 		(value.action === 'savePreset' && text(value.workspace) && text(value.name) && value.name.length <= 128 && isAgentsLaunch(value.choices)) ||
 		(value.action === 'launch' && text(value.workspace) && isAgentsLaunch(value.choices) && (value.focused === undefined || text(value.focused))) ||
+		(value.action === 'openInGrid' && text(value.workspace) && text(value.terminal) && (value.focused === undefined || text(value.focused))) ||
+		(value.action === 'schedule' && text(value.workspace) && text(value.name) && typeof value.operation === 'string' && ['run', 'pause', 'resume', 'delete'].includes(value.operation)) ||
+		(value.action === 'editSchedule' && text(value.workspace) && text(value.name) && typeof value.prompt === 'string' && !!value.prompt.trim() && value.prompt.length <= 32768 && !value.prompt.includes('\0') && typeof value.every === 'string' && isLaunchInterval(value.every)) ||
 		(value.action === 'resize' && text(value.workspace) && isAgentsLayout(value.layout)) ||
 		(value.action === 'background' && text(value.workspace) && text(value.terminal) && (value.focused === undefined || text(value.focused))) ||
 		(value.action === 'switch' && text(value.workspace)) || (value.action === 'focus' && text(value.workspace) && text(value.terminal)));

@@ -8,15 +8,16 @@ import { test } from 'node:test';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Terminal } from '@outscaled/protocol';
+import { ScheduleSummary, Terminal } from '@outscaled/protocol';
 import { PresetStore, presets, expandPreset } from '../src/grid/presets';
+import { createSchedules, changeSchedule } from '../src/grid/schedules';
 import { agentCommand, planLaunch } from '../src/grid/launch';
 import { defaultLaunch } from '../../../src/vs/workbench/contrib/outscaled/common/agentsLaunch.js';
 import { spawnSync } from 'node:child_process';
 import { createTerminal, ensureTerminal } from '../src/grid/daemonTerminals';
 import { findWsPath, attachArgs, attachEnv } from '../src/grid/wsPath';
 import { tabStatus } from '../src/grid/status';
-import { applyGridRequest, GridMemory } from '../src/grid/memory';
+import { applyGridRequest, openGridPane, GridMemory } from '../src/grid/memory';
 import { agentsSnapshot } from '../src/grid/mapping';
 import type { ServerState } from '../src/daemon/state';
 import { isAgentsSnapshot } from '../../../src/vs/workbench/contrib/outscaled/common/agentsBridge.js';
@@ -224,4 +225,60 @@ test('resize requests round trip weights and reset to equal; old trees restore a
 	assert.deepEqual(new GridMemory(memory.serialize()).recall(workspace), tree);
 	assert.throws(() => applyGridRequest(memory, workspace, presetLayout('single', ['a']), { version: 1, action: 'resize', workspace: 'local/demo', layout: resized }, ['a', 'b']), /grid changed/);
 	assert.deepEqual(memory.recall(workspace), tree);
+});
+
+
+test('scheduled and always-on discovery stays in the strip and retains latest lines', () => {
+	const schedule = ScheduleSummary.parse({ workspace: 'demo', name: 'claude-1', source: 'app', readOnly: false, runtime: 'claude-code', every: '30m', prompt: 'Check', command: null, paused: false, lastRun: null, nextRunAt: '2026-01-01T12:00:00.000Z' });
+	const server = { host: 'local', online: true, workspaces: [{ slug: 'demo', path: '/test/demo' }], schedules: [schedule], terminals: [{ ...terminal, latestLine: 'Latest message' }, { ...terminal, id: 'always', name: 'claude-2', alwaysOn: true }] } as ServerState;
+	const snapshot = agentsSnapshot([server], undefined, new GridMemory(), '/test/ws', {});
+	assert.ok(isAgentsSnapshot(snapshot));
+	assert.deepEqual({ grid: layoutTerminals(snapshot.workspaces[0].layout), line: snapshot.workspaces[0].terminals[0].latestLine, schedules: snapshot.workspaces[0].schedules }, { grid: [], line: 'Latest message', schedules: [schedule] });
+});
+
+test('schedule creation allocates across schedules and terminals, ignores placement, and validates prompts', async () => {
+	const summary = { workspace: 'demo', name: 'claude-2', source: 'app' as const, readOnly: false, runtime: 'claude-code' as const, every: '30m', prompt: 'Check', command: null, paused: false, lastRun: null, nextRunAt: '2026-01-01T12:00:00.000Z' };
+	const calls: { path: string; method?: string; body?: string }[] = [];
+	const service = { request: async (_host: string, path: string, init?: RequestInit) => {
+		calls.push({ path, method: init?.method, body: init?.body as string | undefined });
+		return Response.json(init?.method === 'GET' ? [summary] : { ...summary, ...JSON.parse(init!.body as string) });
+	} };
+	await createSchedules(service, workspace, { ...defaultLaunch(), layout: 'side-by-side', agents: ['claude', 'codex'], run: 'scheduled', prompt: 'Literal $() prompt', where: 'right' }, ['claude-1', 'codex-1']);
+	assert.deepEqual(calls.slice(1).map(call => ({ method: call.method, body: JSON.parse(call.body!) })), [
+		{ method: 'POST', body: { name: 'claude-3', runtime: 'claude-code', every: '30m', prompt: 'Literal $() prompt' } },
+		{ method: 'POST', body: { name: 'codex-2', runtime: 'codex', every: '30m', prompt: 'Literal $() prompt' } }
+	]);
+	for (const choices of [{ ...defaultLaunch(), run: 'scheduled' as const }, { ...defaultLaunch(), run: 'scheduled' as const, agents: ['shell' as const], prompt: 'Check' }]) {
+		await assert.rejects(createSchedules(service, workspace, choices, []), /require a prompt/);
+	}
+});
+
+test('schedule mutations reject read-only edits and duplicate runs, and use encoded API paths', async () => {
+	let schedule = ScheduleSummary.parse({ workspace: 'demo', name: 'claude-1', source: 'workspace', readOnly: true, runtime: 'claude-code', every: '30m', prompt: 'Check', command: null, paused: false, lastRun: null, nextRunAt: '2026-01-01T12:00:00.000Z' });
+	const calls: { path: string; method?: string; body?: string }[] = [];
+	const service = { request: async (_host: string, path: string, init?: RequestInit) => {
+		calls.push({ path, method: init?.method, body: init?.body as string | undefined });
+		return init?.method === 'DELETE' ? new Response(null, { status: 204 }) : Response.json(init?.method === 'GET' ? [schedule] : schedule);
+	} };
+	await assert.rejects(changeSchedule(service, workspace, { version: 1, action: 'editSchedule', workspace: 'demo', name: 'claude-1', prompt: 'New', every: '2h' }), /workspace.toml/);
+	await assert.rejects(changeSchedule(service, workspace, { version: 1, action: 'schedule', workspace: 'demo', name: 'claude-1', operation: 'delete' }), /workspace.toml/);
+	for (const operation of ['pause', 'resume'] as const) { await changeSchedule(service, workspace, { version: 1, action: 'schedule', workspace: 'demo', name: 'claude-1', operation }); }
+	schedule = { ...schedule, source: 'app', readOnly: false };
+	await changeSchedule(service, workspace, { version: 1, action: 'editSchedule', workspace: 'demo', name: 'claude-1', prompt: 'New', every: '2h' });
+	await changeSchedule(service, workspace, { version: 1, action: 'schedule', workspace: 'demo', name: 'claude-1', operation: 'delete' });
+	assert.deepEqual(calls.filter(call => call.method !== 'GET').map(call => [call.path, call.method, call.body && JSON.parse(call.body)]), [
+		['workspaces/demo/schedules/claude-1/pause', 'POST', undefined], ['workspaces/demo/schedules/claude-1/resume', 'POST', undefined],
+		['workspaces/demo/schedules/claude-1', 'PATCH', { every: '2h', prompt: 'New' }], ['workspaces/demo/schedules/claude-1', 'DELETE', undefined]
+	]);
+	schedule.lastRun = { id: 'run', status: 'running', startedAt: schedule.nextRunAt!, endedAt: null, result: '' };
+	await assert.rejects(changeSchedule(service, workspace, { version: 1, action: 'schedule', workspace: 'demo', name: 'claude-1', operation: 'run' }), /already in progress/);
+});
+
+
+test('Open in Grid inserts right of focus, fills an empty grid, and never duplicates a pane', () => {
+	const tree = presetLayout('side-by-side', ['left', 'right']);
+	assert.deepEqual(layoutTerminals(openGridPane(tree, 'background', 'left')), ['left', 'background', 'right']);
+	assert.deepEqual(layoutTerminals(openGridPane(presetLayout('single', []), 'background')), ['background']);
+	assert.deepEqual(openGridPane(tree, 'right', 'left'), tree);
+	assert.deepEqual(layoutTerminals(openGridPane(tree, 'background', 'stale-focus')), ['left', 'right', 'background']);
 });

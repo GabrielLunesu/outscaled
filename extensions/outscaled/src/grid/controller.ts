@@ -5,24 +5,25 @@
 
 import * as vscode from 'vscode';
 import { agentsInspectCommand, agentsPublishCommand, agentsRequestCommand, AgentsReceipt, isAgentsReceipt, isAgentsRequest } from '../../../../src/vs/workbench/contrib/outscaled/common/agentsBridge.js';
-import { layoutTerminals, presetLayout, splitPane } from '../../../../src/vs/workbench/contrib/outscaled/common/agentsLayout.js';
+import { presetLayout } from '../../../../src/vs/workbench/contrib/outscaled/common/agentsLayout.js';
 import { DaemonService } from '../daemon/service';
 import { WorkspaceSelection } from '../workspaces/selection';
 import { containsUri, WorkspaceLocation } from '../workspaces/uri';
 import { workspaceKey } from '../workspaces/identity';
 import { createTerminal, ensureTerminal, listTerminals } from './daemonTerminals';
-import { applyGridRequest, GridMemory, gridMemoryKey } from './memory';
+import { applyGridRequest, openGridPane, GridMemory, gridMemoryKey } from './memory';
 import { PresetStore, builtInPresets, expandPreset, presets } from './presets';
 import { attachEnv, findWsPath } from './wsPath';
 import { AgentsLaunch, insertLaunch, launchLayout } from '../../../../src/vs/workbench/contrib/outscaled/common/agentsLaunch.js';
 import { planLaunch } from './launch';
+import { changeSchedule, createSchedules } from './schedules';
 import { agentsSnapshot } from './mapping';
 
 /** Read-only subset of the built-in Git extension's v1 API. */
 interface GitExtension { enabled: boolean; getAPI(version: 1): { repositories: readonly { rootUri: vscode.Uri; state: { HEAD: { name?: string } | undefined } }[] } }
 
 const pendingKey = 'outscaled.pendingGridOpen';
-type OpenRequest = { kind: 'preset'; workspace: WorkspaceLocation; preset: string } | { kind: 'focus'; workspace: WorkspaceLocation; name: string };
+type OpenRequest = { kind: 'preset'; workspace: WorkspaceLocation; preset: string } | { kind: 'focus'; workspace: WorkspaceLocation; name: string; focused?: string };
 
 /** Extension-owned daemon operations; core alone owns the live terminal clients. */
 export class TerminalGrid implements vscode.Disposable {
@@ -70,12 +71,18 @@ export class TerminalGrid implements vscode.Disposable {
 								await this.publish(focus ? { workspace: value.workspace, terminal: focus } : undefined);
 							});
 						}
+						else if (value.action === 'schedule' || value.action === 'editSchedule') {
+							await this.enqueue(async () => {
+								try { await changeSchedule(this.service, location, value); }
+								finally { await this.service.synchronize(location.host); await this.publish(); }
+							});
+						}
 						else if (value.action === 'launch') { await this.launch(location, value.choices, value.focused); }
 						else if (value.action === 'switch') {await vscode.commands.executeCommand('outscaled.switchWorkspace', location);}
 						else {
 							const terminal = workspace.terminals.find(terminal => terminal.id === value.terminal);
 							if (!terminal) {throw new Error(vscode.l10n.t('Terminal is unavailable'));}
-							await this.open({ kind: 'focus', workspace: location, name: terminal.name });
+							await this.open({ kind: 'focus', workspace: location, name: terminal.name, focused: value.action === 'openInGrid' ? value.focused : undefined });
 						}
 					}
 					return { version: 1, ok: true };
@@ -141,12 +148,8 @@ export class TerminalGrid implements vscode.Disposable {
 			} else {
 				focus = (await listTerminals(this.service, request.workspace)).find(terminal => terminal.name === request.name)?.id;
 				if (!focus) {throw new Error(vscode.l10n.t('This terminal is unavailable'));}
-				const tree = this.memory.recall(request.workspace);
-				if (!tree) {this.memory.remember(request.workspace, presetLayout('single', [focus]));}
-				else if (!layoutTerminals(tree).includes(focus)) {
-					const last = layoutTerminals(tree).at(-1);
-					this.memory.remember(request.workspace, last ? splitPane(tree, last, focus, 'right') : presetLayout('single', [focus]));
-				}
+				const tree = this.memory.recall(request.workspace) ?? presetLayout('single', []);
+				this.memory.remember(request.workspace, openGridPane(tree, focus, request.focused));
 			}
 			await this.service.synchronize(request.workspace.host);
 			await this.publish(focus ? { workspace: workspaceKey(request.workspace), terminal: focus } : undefined);
@@ -157,6 +160,11 @@ export class TerminalGrid implements vscode.Disposable {
 		await this.enqueue(async () => {
 			this.executable = await findWsPath(vscode.workspace.getConfiguration('outscaled').get<string>('wsPath'));
 			const terminals = await listTerminals(this.service, workspace);
+			if (choices.run === 'scheduled') {
+				try { await createSchedules(this.service, workspace, choices, terminals.map(terminal => terminal.name)); }
+				finally { await this.service.synchronize(workspace.host); await this.publish(); }
+				return;
+			}
 			const tree = this.snapshot().workspaces.find(candidate => candidate.id === workspaceKey(workspace))!.layout;
 			const plan = planLaunch(choices, terminals.map(terminal => terminal.name), tree, focused);
 			const ids: string[] = [];

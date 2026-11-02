@@ -3,7 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { AgentsLayout, isAgentsLayout, layoutTerminals, reconcileLayout, removePane, sameLayoutStructure } from '../../../../src/vs/workbench/contrib/outscaled/common/agentsLayout.js';
+import { AgentsLayout, isAgentsLayout, layoutTerminals, reconcileLayout, removePane, sameLayoutStructure, splitPane } from '../../../../src/vs/workbench/contrib/outscaled/common/agentsLayout.js';
 import { l10n } from 'vscode';
 import type { AgentsRequest } from '../../../../src/vs/workbench/contrib/outscaled/common/agentsBridge.js';
 import type { WorkspaceLocation } from '../workspaces/uri';
@@ -41,4 +41,14 @@ export function applyGridRequest(memory: GridMemory, workspace: WorkspaceLocatio
 	memory.remember(workspace, layout, known);
 	const remaining = layoutTerminals(layout);
 	return request.focused && remaining.includes(request.focused) ? request.focused : remaining[Math.min(index, remaining.length - 1)];
+}
+
+/** Reopening never replaces or duplicates agents; insertion follows the currently focused pane. */
+export function openGridPane(tree: AgentsLayout, terminal: string, focused?: string): AgentsLayout {
+	const ids = layoutTerminals(tree);
+	if (ids.includes(terminal)) { return tree; }
+	const anchor = focused && ids.includes(focused) ? focused : ids.at(-1);
+	const next = anchor ? splitPane(tree, anchor, terminal, 'right') : { type: 'pane' as const, terminal };
+	if (!isAgentsLayout(next)) { throw new Error(l10n.t('The resulting grid is too deeply nested')); }
+	return next;
 }
