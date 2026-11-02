@@ -13,7 +13,7 @@ afterEach(() => { state?.close(); state = undefined; f?.cleanup(); });
 test("migration creates full schema once and preserves data across reopen", () => {
   f = fixture();
   state = new State(f.config.statePath);
-  expect(state.db.query("PRAGMA user_version").get()).toEqual({ user_version: 6 });
+  expect(state.db.query("PRAGMA user_version").get()).toEqual({ user_version: 7 });
   state.insertWorkspace(workspace);
   state.insertTerminal(terminal);
   const event: Event = { id: "event-1", type: "terminal.status", workspace: workspace.slug, terminal: terminal.id,
@@ -74,4 +74,27 @@ test("a failed migration rolls back tables and user_version together", () => {
   } finally {
     db.close();
   }
+});
+
+test("upgrade clears only screen-derived agent lines and preserves agent text and shells", () => {
+  f = fixture();
+  state = new State(f.config.statePath);
+  state.insertWorkspace(workspace);
+  for (const [index, runtime, fromAgent] of [
+    [0, "claude-code", false], [1, "codex", false],
+    [2, "claude-code", true], [3, "codex", true], [4, null, false],
+  ] as const) {
+    const id = `line-${index}`;
+    state.insertTerminal({ ...terminal, id, name: id, session: `ws-demo-${id}`, runtime });
+    // Seed the v6 representation, before screen writes to agents were forbidden.
+    state.db.query("UPDATE terminals SET latestLine = ?, latestLineFromAgent = ? WHERE id = ?")
+      .run(`stored ${index}`, Number(fromAgent), id);
+  }
+  state.db.exec("PRAGMA user_version = 6");
+  state.close();
+  state = new State(f.config.statePath);
+  expect(state.listTerminals().map(row => row.latestLine)).toEqual([null, null, "stored 2", "stored 3", "stored 4"]);
+  state.close();
+  state = new State(f.config.statePath);
+  expect(state.listTerminals().map(row => row.latestLine)).toEqual([null, null, "stored 2", "stored 3", "stored 4"]);
 });

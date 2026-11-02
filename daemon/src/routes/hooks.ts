@@ -1,5 +1,5 @@
 import { ClaudeCodeHookRequest, CodexHookRequest, type ClaudeCodeHookPayload, type TerminalStatus } from "@outscaled/protocol";
-import { latestLine, transcriptLatestLine } from "../attention";
+import { latestLine } from "../attention";
 import type { Schedules } from "../schedules";
 import type { RouteContext } from "../context";
 import { apiError, validateBody } from "../http";
@@ -43,10 +43,8 @@ export function createHooksRoute({ state, terminals }: RouteContext, schedules?:
         }
       } else {
         const payload = ClaudeCodeHookRequest.parse(body).payload;
-        if (payload.transcript_path) {
-          const line = await transcriptLatestLine(payload.transcript_path);
-          if (line) state.updateLatestLine(terminal.id, line, true);
-        }
+        await terminals.claudeLatestLine(terminal.id, payload.transcript_path,
+          payload.hook_event_name === "Stop" || payload.hook_event_name === "Notification");
         await terminals.changes.claudeEdit(terminal, payload);
         const status = claudeStatus(payload);
         if (status && !(body.payload.hook_event_name === "SessionStart" && schedules?.runningTerminal(terminal.id))) {

@@ -62,6 +62,7 @@ export async function startServer(config: Config, supervisorOptions?: Supervisor
         await stream.stop();
         await schedules.stop();
         await supervisor.stop();
+        await terminals.stop();
         // Bun 1.3.14 can leave this promise pending after a server-side WS
         // close, even though the socket is closed (oven-sh/bun#36223).
         // All sockets have been closed by stream.stop; bound the stale counter

@@ -223,7 +223,7 @@ export class State {
   updateLatestLine(id: string, line: string | null, fromAgent = false): void {
     LatestLine.parse(line);
     const terminal = this.getTerminal(id);
-    if (!terminal || (!fromAgent && this.hasAgentLatestLine(id))) return;
+    if (!terminal || (!fromAgent && (terminal.runtime || this.hasAgentLatestLine(id)))) return;
     this.db.query("UPDATE terminals SET latestLine = ?, latestLineFromAgent = ? WHERE id = ?").run(line, Number(fromAgent), id);
     if (line === terminal.latestLine) return;
     this.announce({ type: "terminal.latest_line", workspace: terminal.workspace, terminal: id, payload: { latestLine: line } },

@@ -180,7 +180,7 @@ for (const runtime of ["codex", "claude-code"] as const) {
 test("a crashed Codex retains its last status across daemon restart", async () => {
   const terminal = await open("codex --exit", true);
   await eventually(() => row(terminal).state === "crashed", 8000);
-  expect(row(terminal)).toMatchObject({ status: "starting", restarts: 5, pid: null });
+  expect(row(terminal)).toMatchObject({ status: "starting", restarts: 5, pid: null, latestLine: null });
   const before = row(terminal);
   await app.stop();
   app = await startServer(f.config, { backoffMs: [0] });

@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 import type { OpenTerminalRequest, Terminal, TerminalInputRequest, TerminalAnswerRequest, TerminalAnswer, TerminalRuntime, Workspace } from "@outscaled/protocol";
 import type { State } from "./state";
 import { Changes } from "./changes";
-import { latestLine, permissionPrompt } from "./attention";
+import { latestLine, permissionPrompt, transcriptLatestLine } from "./attention";
 import { Tmux, type TmuxPane } from "./tmux";
 
 export class TerminalConflict extends Error {}
@@ -68,6 +68,8 @@ export class Terminals {
   private pending: Promise<unknown> = Promise.resolve();
   private readonly screenWatches = new Map<string, { generation: number | null; activity: number; pid: number; readAt: number; dirty: boolean }>();
   private readonly codexNotifyTimes = new Map<string, number>();
+  private readonly transcriptReads = new Map<string, { timer?: ReturnType<typeof setTimeout> }>();
+  private stopped = false;
 
   readonly changes: Changes;
 
@@ -76,6 +78,52 @@ export class Terminals {
     private readonly tmux: Tmux,
     private readonly launch?: { claudeSettings: string; port: number },
   ) { this.changes = new Changes(state); }
+
+  async stop(): Promise<void> {
+    this.stopped = true;
+    for (const pending of this.transcriptReads.values()) clearTimeout(pending.timer);
+    this.transcriptReads.clear();
+    await this.pending;
+  }
+
+  // Called under the lifecycle lock. Every hook supersedes any outstanding
+  // reads, including hooks without a transcript or a new assistant message.
+  async claudeLatestLine(id: string, path?: string, retry = false): Promise<void> {
+    clearTimeout(this.transcriptReads.get(id)?.timer);
+    this.transcriptReads.delete(id);
+    if (!path || this.stopped) return;
+    const terminal = this.state.getTerminal(id)!;
+    const read = async () => {
+      const line = await transcriptLatestLine(path);
+      if (!line || line === terminal.latestLine) return false;
+      this.state.updateLatestLine(id, line, true);
+      return true;
+    };
+    if (await read() || !retry || this.stopped) return;
+    const pending: { timer?: ReturnType<typeof setTimeout> } = {};
+    this.transcriptReads.set(id, pending);
+    // Retry after 0.3 s, 1 s and 3 s without holding the hook response or
+    // the lifecycle lock while waiting for the transcript to flush.
+    const delays = [300, 700, 2000];
+    const schedule = (index: number) => {
+      pending.timer = setTimeout(() => {
+        void this.serial(async () => {
+          if (this.stopped || this.transcriptReads.get(id) !== pending) return;
+          const current = this.state.getTerminal(id);
+          const superseded = !current || current.state !== "running" || current.pid !== terminal.pid ||
+            current.restarts !== terminal.restarts || current.latestLine !== terminal.latestLine;
+          if (superseded || await read() || index === delays.length - 1) {
+            this.transcriptReads.delete(id);
+          } else schedule(index + 1);
+        }).catch(error => {
+          this.transcriptReads.delete(id);
+          console.error("wsd: transcript reread failed", error);
+        });
+      }, delays[index]);
+      pending.timer.unref();
+    };
+    schedule(0);
+  }
 
   async codexTurnComplete(id: string): Promise<void> {
     const terminal = this.state.getTerminal(id);
@@ -291,9 +339,10 @@ export class Terminals {
     // Take a trailing sample after that bucket expires as well.
     watch.dirty = pane.outputGeneration === null && now < (pane.windowActivity + 1) * 1000;
     const needsPrompt = terminal.status === "needs_input" && !terminal.request?.permission;
-    if (this.state.hasAgentLatestLine(terminal.id) && !needsPrompt) return;
+    const needsLine = !terminal.runtime && !this.state.hasAgentLatestLine(terminal.id);
+    if (!needsLine && !needsPrompt) return;
     const screen = await this.tmux.captureScreen(pane.pane);
-    if (!this.state.hasAgentLatestLine(terminal.id)) this.state.updateLatestLine(terminal.id, latestLine(screen));
+    if (needsLine) this.state.updateLatestLine(terminal.id, latestLine(screen));
     if (needsPrompt) {
       const parsed = permissionPrompt(screen);
       if (parsed) this.state.updateTerminalStatus(terminal.id, "needs_input", {
