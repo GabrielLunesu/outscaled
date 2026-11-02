@@ -64,7 +64,9 @@ test("transcript reads only the bounded tail, ignores partial records and non-te
       assistant("older"),
       JSON.stringify({ type: "user", message: { content: "user text" } }),
       assistant([{ type: "thinking", thinking: "secret thoughts" }, { type: "text", text: "first\n latest assistant text  " }, { type: "tool_use", name: "Edit" }]),
-      assistant([{ type: "tool_use", name: "Bash" }]), "garbage", "{partial",
+      assistant([{ type: "tool_use", name: "Bash" }]),
+      JSON.stringify({ type: "api-request-blob", message: { content: [{ type: "text", text: "request internals" }, { type: "tool_addition" }] } }),
+      "garbage", "{partial",
     ].join("\n"));
     expect(await transcriptLatestLine(path)).toBe("latest assistant text");
     writeFileSync(path, assistant("complete") + "\n" + assistant("not newline-committed"));
@@ -134,3 +136,31 @@ test("screen fallback reads at most once a second after output, including a trai
     expect(state.getTerminal(terminal.id)?.latestLine).toBe("screen 2");
   } finally { state.close(); }
 });
+
+for (const runtime of ["claude-code", "codex"] as const) {
+  test(`${runtime} never takes a screen line, including while capturing a permission prompt`, async () => {
+    const state = new State(":memory:");
+    const tmux = new Tmux("unused-test-socket");
+    let reads = 0;
+    tmux.captureScreen = async () => { reads++; return promptFixture("edit"); };
+    const terminals = new Terminals(state, tmux);
+    const pane = { pid: 10, pane: "%0", outputGeneration: 0, windowActivity: 10 } as TmuxPane;
+    state.insertWorkspace(workspace);
+    state.insertTerminal({ ...terminal, runtime, status: "idle", statusChangedAt: workspace.createdAt });
+    try {
+      await terminals.refreshScreen(state.getTerminal(terminal.id)!, pane);
+      expect(reads).toBe(0);
+      state.updateLatestLine(terminal.id, "? for shortcuts");
+      expect(state.getTerminal(terminal.id)?.latestLine).toBeNull();
+      state.updateTerminalStatus(terminal.id, "needs_input");
+      // New process observation forces a screen sample without a wall-clock wait.
+      pane.pid++;
+      await terminals.refreshScreen(state.getTerminal(terminal.id)!, pane);
+      expect(reads).toBe(1);
+      expect(state.getTerminal(terminal.id)?.request?.permission).not.toBeNull();
+      expect(state.getTerminal(terminal.id)?.latestLine).toBeNull();
+      state.updateLatestLine(terminal.id, "assistant output", true);
+      expect(state.getTerminal(terminal.id)?.latestLine).toBe("assistant output");
+    } finally { await terminals.stop(); state.close(); }
+  });
+}

@@ -77,6 +77,8 @@ const migrations = [
     inferred INTEGER NOT NULL CHECK (inferred IN (0, 1)),
     PRIMARY KEY (workspace, path, terminal, runtime)
   );`,
+  `UPDATE terminals SET latestLine = NULL
+    WHERE runtime IN ('claude-code', 'codex') AND latestLineFromAgent = 0;`,
 ];
 
 export function migrate(db: Database): void {

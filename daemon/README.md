@@ -546,9 +546,13 @@ Terminal records (both GET terminal lists and `ws term ls --json`) include:
   hooks read only the final 256 KiB of `transcript_path` JSONL and use the newest
   completed assistant text entry there, ignoring tool/thinking records and
   partial lines. Codex turn-complete notify uses `last-assistant-message`.
-  Until agent text is available, and for shells, wsd samples the visible pane's
-  last non-blank line after output at most once per second. Once agent text is
-  available it takes precedence over subsequent screen redraws.
+  If Stop or Notification sees no new text, wsd rereads after 0.3, 1 and 3
+  seconds without delaying the hook response, stopping when new text appears.
+  A newer hook cancels pending reads so an older transcript cannot replace its
+  line. Agent latest lines stay null until agent text arrives; TUI footers are
+  never used. Upgrading clears previously stored screen-derived agent lines.
+  Shells sample the visible pane's last non-blank line after output at most once
+  per second.
 
 Latest-line changes emit the live-only message
 `{type: "terminal.latest_line", workspace, terminal, payload: {latestLine}}`.
