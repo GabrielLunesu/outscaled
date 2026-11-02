@@ -1,0 +1,58 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Gabriel Lunesu. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.outscaled-code-switcher {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 35px;
+	z-index: 10;
+	display: flex;
+	align-items: center;
+	justify-content: space-evenly;
+	background: var(--vscode-sideBar-background);
+}
+.outscaled-code-switcher[hidden] { display: none; }
+.outscaled-code-switcher button {
+	width: 32px;
+	height: 28px;
+	padding: 0;
+	border: 0;
+	border-radius: var(--vscode-cornerRadius-small);
+	background: transparent;
+	color: var(--vscode-descriptionForeground);
+	cursor: pointer;
+}
+.outscaled-code-switcher button[aria-pressed="true"] { color: var(--vscode-foreground); background: var(--vscode-toolbar-activeBackground); }
+.outscaled-code-switcher button:hover, .outscaled-rail-agent:hover { background: var(--vscode-toolbar-hoverBackground); }
+.outscaled-code-switcher button:focus-visible, .outscaled-rail-agent:focus-visible { outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder); outline-offset: -1px; }
+.outscaled-agents-rail { box-sizing: border-box; overflow-y: auto; padding: var(--vscode-spacing-size80); }
+.outscaled-rail-agent {
+	display: flex;
+	align-items: center;
+	gap: var(--vscode-spacing-size80);
+	width: 100%;
+	padding: var(--vscode-spacing-size100) var(--vscode-spacing-size80);
+	border: 0;
+	border-radius: var(--vscode-cornerRadius-small);
+	background: transparent;
+	color: var(--vscode-foreground);
+	text-align: left;
+	font: inherit;
+	cursor: pointer;
+}
+.outscaled-rail-agent > span:last-child { display: flex; flex-direction: column; min-width: 0; gap: var(--vscode-spacing-size40); }
+.outscaled-rail-agent strong { font-weight: var(--vscode-fontWeight-semiBold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outscaled-rail-agent small { font-size: var(--vscode-fontSize-body2); color: var(--vscode-descriptionForeground); }
+.outscaled-rail-agent[data-status="working"] .outscaled-status-dot { background: var(--vscode-terminal-ansiGreen); }
+.outscaled-rail-agent[data-status="needs_input"] .outscaled-status-dot { background: var(--vscode-terminal-ansiRed); }
+.outscaled-rail-agent[data-status="needs_input"] small { color: var(--vscode-terminal-ansiRed); }
+.outscaled-rail-agent[data-status="crashed"] .outscaled-status-dot { background: transparent; color: var(--vscode-terminal-ansiRed); }
+
+.outscaled-code-switcher-fallback[hidden] { display: none; }
+.outscaled-code-switcher-fallback .outscaled-code-switcher { position: static; height: auto; background: transparent; gap: var(--vscode-spacing-size20); }
+
+.outscaled-code-switcher-fallback .outscaled-code-switcher button { box-sizing: border-box; padding: 0; border: 0; }

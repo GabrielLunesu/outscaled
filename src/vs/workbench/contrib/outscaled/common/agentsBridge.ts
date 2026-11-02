@@ -31,12 +31,38 @@ export interface AgentSchedule {
 	paused: boolean; nextRunAt: string | null;
 	lastRun: { id: string; startedAt: string; endedAt: string | null; status: 'running' | 'succeeded' | 'failed' | 'interrupted'; result: string } | null;
 }
+/** Validated daemon changes, kept optional for older version 1 producers. */
+export interface AgentChangeAttribution { terminal: string; runtime: 'claude-code' | 'codex'; time: string; inferred: boolean }
+export interface AgentChangedFile { path: string; originalPath: string | null; status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked'; agents: AgentChangeAttribution[] }
+export interface AgentChanges { attributionAvailable: boolean; files: AgentChangedFile[] }
+export interface AgentChangeEditor { original?: string; modified: string; label: string }
+
+/** Paths are workspace relative, never URI strings or filesystem traversal. */
+export function isChangePath(value: unknown): value is string {
+	return text(value) && !/[\\\0]/.test(value) && value.split('/').every(segment => !!segment && segment !== '.' && segment !== '..');
+}
+export function isAgentChanges(value: unknown): value is AgentChanges {
+	return record(value) && typeof value.attributionAvailable === 'boolean' && Array.isArray(value.files) && value.files.every(file =>
+		record(file) && isChangePath(file.path) && (file.originalPath === null || isChangePath(file.originalPath)) &&
+		typeof file.status === 'string' && ['modified', 'added', 'deleted', 'renamed', 'untracked'].includes(file.status) && Array.isArray(file.agents) && file.agents.every(agent =>
+			record(agent) && text(agent.terminal) && (agent.runtime === 'claude-code' || agent.runtime === 'codex') && timestamp(agent.time) && typeof agent.inferred === 'boolean')) &&
+		new Set(value.files.map(file => file.path)).size === value.files.length;
+}
+export function isAgentChangeEditor(value: unknown): value is AgentChangeEditor {
+	if (!record(value) || !text(value.label) || value.label.includes('\0') || !text(value.modified) || value.modified.includes('\0')) { return false; }
+	if (value.original === undefined) { return /^ws:\/\/[^/]+\/.+/.test(value.modified); }
+	return text(value.original) && !value.original.includes('\0') && /^(git|outscaled-empty):\//.test(value.original) && /^(file|outscaled-empty):\//.test(value.modified);
+}
 export interface AgentsWorkspace {
 	id: string; name: string; server: string; root: string; selected: boolean; online: boolean; branch?: string; path?: string;
+	changes?: AgentChanges; changesError?: string;
 	terminals: AgentPane[]; schedules?: AgentSchedule[]; layout: AgentsLayout;
 }
 export interface AgentsSnapshot { version: 1; workspaces: AgentsWorkspace[]; focus?: { workspace: string; terminal: string } }
 export type AgentsRequest = { version: 1; action: 'newAgents' } |
+	{ version: 1; action: 'changeDiff'; workspace: string; path: string } |
+	{ version: 1; action: 'openChange'; workspace: string; path: string } |
+	{ version: 1; action: 'commitChanges'; workspace: string; message: string; paths: string[] } |
 	{ version: 1; action: 'presets'; workspace: string } |
 	{ version: 1; action: 'savePreset'; workspace: string; name: string; choices: AgentsLaunch } |
 	{ version: 1; action: 'launch'; workspace: string; choices: AgentsLaunch; focused?: string } |
@@ -49,7 +75,7 @@ export type AgentsRequest = { version: 1; action: 'newAgents' } |
 	{ version: 1; action: 'answer'; workspace: string; terminal: string; answer: 'allow_once' | 'deny' } |
 	{ version: 1; action: 'focus'; workspace: string; terminal: string };
 export interface AgentsReceipt {
-	version: 1; ok: boolean; jumped?: boolean; error?: string; presets?: AgentsPreset[];
+	version: 1; ok: boolean; changeEditor?: AgentChangeEditor; jumped?: boolean; error?: string; presets?: AgentsPreset[];
 	panes?: { workspace: string; terminal: string; processId?: number; visible: boolean }[];
 }
 
@@ -100,6 +126,7 @@ export function isAgentsSnapshot(value: unknown): value is AgentsSnapshot {
 			!workspace.terminals.every(pane) || !isAgentsLayout(workspace.layout)) { return false; }
 		if (workspace.schedules !== undefined && (!Array.isArray(workspace.schedules) || workspace.schedules.length > 4096 || !workspace.schedules.every(schedule) ||
 			new Set(workspace.schedules.map(schedule => schedule.name)).size !== workspace.schedules.length)) { return false; }
+		if ((workspace.changes !== undefined && !isAgentChanges(workspace.changes)) || (workspace.changesError !== undefined && !text(workspace.changesError))) { return false; }
 		ids.add(workspace.id);
 		if (workspace.selected) { selected++; }
 		const terminals = new Set(workspace.terminals.map(terminal => terminal.id));
@@ -117,6 +144,9 @@ export function isAgentsSnapshot(value: unknown): value is AgentsSnapshot {
 export function isAgentsRequest(value: unknown): value is AgentsRequest {
 	return record(value) && value.version === agentsBridgeVersion && (value.action === 'newAgents' ||
 		(value.action === 'answer' && text(value.workspace) && text(value.terminal) && (value.answer === 'allow_once' || value.answer === 'deny')) ||
+		((value.action === 'changeDiff' || value.action === 'openChange') && text(value.workspace) && isChangePath(value.path)) ||
+		(value.action === 'commitChanges' && text(value.workspace) && text(value.message) && !!value.message.trim() && !value.message.includes('\0') &&
+			Array.isArray(value.paths) && value.paths.length > 0 && value.paths.every(isChangePath) && new Set(value.paths).size === value.paths.length) ||
 		(value.action === 'presets' && text(value.workspace)) ||
 		(value.action === 'savePreset' && text(value.workspace) && text(value.name) && value.name.length <= 128 && isAgentsLaunch(value.choices)) ||
 		(value.action === 'launch' && text(value.workspace) && isAgentsLaunch(value.choices) && (value.focused === undefined || text(value.focused))) ||
@@ -130,6 +160,7 @@ export function isAgentsRequest(value: unknown): value is AgentsRequest {
 
 export function isAgentsReceipt(value: unknown): value is AgentsReceipt {
 	return record(value) && value.version === agentsBridgeVersion && typeof value.ok === 'boolean' && (value.jumped === undefined || typeof value.jumped === 'boolean') &&
+		(value.changeEditor === undefined || isAgentChangeEditor(value.changeEditor)) &&
 		(value.presets === undefined || (Array.isArray(value.presets) && value.presets.length <= 1024 && value.presets.every(preset => record(preset) && text(preset.name) && preset.name.length <= 128 && isAgentsLaunch(preset.choices)))) &&
 		(value.error === undefined || typeof value.error === 'string') && (value.panes === undefined || (Array.isArray(value.panes) && value.panes.every(pane =>
 			record(pane) && text(pane.workspace) && text(pane.terminal) && typeof pane.visible === 'boolean' &&

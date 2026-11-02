@@ -18,9 +18,13 @@ import { ViewContainerLocation } from '../../../common/views.js';
 import { IEditorGroupsService, IEditorWorkingSet } from '../../../services/editor/common/editorGroupsService.js';
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IPaneCompositePartService } from '../../../services/panecomposite/browser/panecomposite.js';
-import { AgentsMode, AgentsReceipt, AgentsSnapshot, agentsInspectCommand, agentsPublishCommand, isAgentsSnapshot } from '../common/agentsBridge.js';
+import { AgentsMode, AgentsReceipt, AgentsSnapshot, agentsInspectCommand, agentsPublishCommand, isAgentsSnapshot, isAgentChangeEditor } from '../common/agentsBridge.js';
 import { AgentsEditor, AgentsInput } from './agentsEditor.js';
 import { IAgentsService } from './agentsService.js';
+import { backgroundAgents } from './agentsBackgroundModel.js';
+import { agentsRailId } from './agentsCode.js';
+import { IWorkbenchLayoutService, Parts } from '../../../services/layout/browser/layoutService.js';
+import { URI } from '../../../../base/common/uri.js';
 import { agentsSidebarId } from './agentsSidebar.js';
 import './media/agentsView.css';
 import './agentsPaneActions.js';
@@ -46,6 +50,7 @@ class AgentsWorkbench extends Disposable implements IAgentsWorkbench {
 	private readonly input = this._register(new MutableDisposable<AgentsInput>());
 	constructor(@IAgentsService private readonly agents: IAgentsService, @IEditorService private readonly editors: IEditorService,
 		@IEditorGroupsService private readonly groups: IEditorGroupsService, @IPaneCompositePartService private readonly sidebar: IPaneCompositePartService,
+		@IWorkbenchLayoutService private readonly layout: IWorkbenchLayoutService,
 		@IStorageService private readonly storage: IStorageService, @ILogService private readonly log: ILogService) {
 		super();
 		this.modes = storage.getObject<Record<string, WorkspaceMode>>(storageKey, StorageScope.WORKSPACE, {});
@@ -99,6 +104,7 @@ class AgentsWorkbench extends Disposable implements IAgentsWorkbench {
 	private async show(mode: AgentsMode, switching = false): Promise<void> {
 		const previousMode = this.agents.mode;
 		if (mode === 'agents') {
+			this.layout.setPartHidden(true, Parts.AUXILIARYBAR_PART);
 			if (previousMode === 'code' && !switching) { this.rememberCode(); }
 			if (previousMode === 'code' || switching) { await this.groups.applyWorkingSet('empty', { preserveFocus: true }); }
 			this.options.value = this.groups.mainPart.enforcePartOptions({ showTabs: 'none', editorActionsLocation: 'hidden', showBreadcrumbs: false });
@@ -115,7 +121,10 @@ class AgentsWorkbench extends Disposable implements IAgentsWorkbench {
 				const code = this.selected && this.modes[this.selected]?.code;
 				if (code) { await this.groups.applyWorkingSet(code); }
 			}
+			this.layout.setPartHidden(false, Parts.SIDEBAR_PART);
 			await this.sidebar.openPaneComposite('workbench.view.explorer', ViewContainerLocation.Sidebar);
+			await this.sidebar.openPaneComposite(agentsRailId, ViewContainerLocation.AuxiliaryBar);
+			this.layout.resizePart(Parts.AUXILIARYBAR_PART, 200 - this.layout.getSize(Parts.AUXILIARYBAR_PART).width, 0);
 		}
 		this.agents.mode = mode;
 		if (this.selected) { this.modes[this.selected] = { ...this.modes[this.selected], mode }; }
@@ -134,6 +143,26 @@ CommandsRegistry.registerCommand(agentsPublishCommand, async (accessor, value: u
 });
 CommandsRegistry.registerCommand('outscaled.agents.mode', async (accessor, mode: unknown) => {
 	if (mode === 'agents' || mode === 'code') { await accessor.get(IAgentsWorkbench).setMode(mode); }
+});
+
+CommandsRegistry.registerCommand('outscaled.agents.backgroundCard', async (accessor, workspaceId: unknown, agentId: unknown) => {
+	const agents = accessor.get(IAgentsService);
+	const workspace = agents.snapshot.workspaces.find(workspace => workspace.selected && workspace.id === workspaceId);
+	if (typeof agentId !== 'string' || !workspace || !backgroundAgents(workspace).some(agent => agent.id === agentId)) { return; }
+	const workbench = accessor.get(IAgentsWorkbench);
+	const editors = accessor.get(IEditorService);
+	await workbench.setMode('agents');
+	if (agents.snapshot.workspaces.find(workspace => workspace.selected)?.id === workspaceId && editors.activeEditorPane instanceof AgentsEditor) { editors.activeEditorPane.revealBackgroundAgent(agentId); }
+});
+
+CommandsRegistry.registerCommand('outscaled.agents.openChange', async (accessor, value: unknown) => {
+	if (!isAgentChangeEditor(value)) { throw new Error(localize('changes.invalidEditor', "Invalid change editor request.")); }
+	const workbench = accessor.get(IAgentsWorkbench);
+	const editors = accessor.get(IEditorService);
+	await workbench.setMode('code');
+	if (value.original) {
+		await editors.openEditor({ original: { resource: URI.parse(value.original) }, modified: { resource: URI.parse(value.modified) }, label: value.label, options: { pinned: true } });
+	} else { await editors.openEditor({ resource: URI.parse(value.modified), options: { pinned: true } }); }
 });
 
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerDefaultConfigurations([{ overrides: {

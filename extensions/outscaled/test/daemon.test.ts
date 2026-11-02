@@ -91,11 +91,12 @@ test('stream precedes snapshot, replays in-flight status, refetches membership a
 	let schedules: ScheduleSummary[] = [];
 	let terminals = [{ ...terminal }];
 	let workspaces = [workspace];
+	let changes = { attributionAvailable: true, files: [] as { path: string; originalPath: null; status: 'modified'; agents: [] }[] };
 	let delaySnapshot = true;
 	const server = createServer((req, res) => {
 		assert.ok(connected > 0, 'stream opens before any snapshot request');
 		requests++;
-		const value = req.url?.endsWith('/schedules') ? schedules.filter(schedule => req.url === `/v1/workspaces/${schedule.workspace}/schedules`) : req.url === '/v1/health' ? health : req.url === '/v1/workspaces' ? workspaces : terminals;
+		const value = req.url?.endsWith('/changes') ? changes : req.url?.endsWith('/schedules') ? schedules.filter(schedule => req.url === `/v1/workspaces/${schedule.workspace}/schedules`) : req.url === '/v1/health' ? health : req.url === '/v1/workspaces' ? workspaces : terminals;
 		const body = JSON.stringify(value);
 		if (req.url === '/v1/terminals' && delaySnapshot) {
 			delaySnapshot = false;
@@ -115,6 +116,12 @@ test('stream precedes snapshot, replays in-flight status, refetches membership a
 		assert.deepEqual(await (await earlyRead).json(), health, 'startup file clients wait for the shared connection');
 		assert.equal(connection.state.terminals[0].status, 'needs_input');
 		const send = (message: unknown) => { for (const socket of wss.clients) {socket.send(JSON.stringify(message));} };
+		await connection.selectChanges('demo');
+		assert.deepEqual(connection.state.changes?.demo, changes);
+		assert.equal(connection.state.changes?.['constructor'], undefined, 'valid workspace slugs cannot inherit cache entries');
+		changes = { attributionAvailable: true, files: [{ path: 'changed.ts', originalPath: null, status: 'modified', agents: [] }] };
+		send({ type: 'workspace.changes', workspace: 'demo' });
+		await until(() => connection.state.changes?.demo.files.length === 1);
 		send({ type: 'server.health', payload: { ...health, uptimeSec: 99 } });
 		await until(() => connection.state.health?.uptimeSec === 99);
 		schedules = [ScheduleSummary.parse({ workspace: 'demo', name: 'check', runtime: 'codex', source: 'app', readOnly: false, every: '30m', prompt: 'Check', command: null, paused: false, lastRun: null, nextRunAt: time })];
@@ -133,6 +140,7 @@ test('stream precedes snapshot, replays in-flight status, refetches membership a
 		terminals = [{ ...terminal, status: 'working' }];
 		await until(() => connection.state.online && connected === 2);
 		assert.equal(connection.state.terminals[0].status, 'working');
+		assert.deepEqual(connection.state.changes?.demo, changes);
 		assert.ok(requests >= 9);
 		// Schema errors take only this connection offline, rather than escaping the callback.
 		send({ type: 'server.health', payload: {} });

@@ -3,6 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+/* eslint-disable local/code-no-new-javascript-files -- Extend the existing Node test runner. */
+
 import { build } from '../../../build/node_modules/esbuild/lib/main.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,6 +29,9 @@ try {
 	await build({ entryPoints: [new URL('./notifications.test.ts', import.meta.url).pathname], outfile: notificationTests,
 		bundle: true, platform: 'node', format: 'cjs',
 		alias: { vscode: new URL('./notificationsVscode.ts', import.meta.url).pathname, '@outscaled/protocol': resolve('..', '..', 'protocol/src/index.ts'), zod: resolve('node_modules/zod') } });
-	const result = spawnSync(process.execPath, ['--test', outfile, workspaceTests, gridTests, notificationTests], { stdio: 'inherit' });
+	const changesTests = join(temporary, 'changes.test.cjs');
+	await build({ entryPoints: [new URL('./changes.test.ts', import.meta.url).pathname], outfile: changesTests,
+		bundle: true, platform: 'node', format: 'cjs', alias: { vscode: new URL('./vscode.ts', import.meta.url).pathname } });
+	const result = spawnSync(process.execPath, ['--test', outfile, workspaceTests, gridTests, notificationTests, changesTests], { stdio: 'inherit' });
 	process.exitCode = result.status ?? 1;
 } finally { rmSync(temporary, { recursive: true, force: true }); }

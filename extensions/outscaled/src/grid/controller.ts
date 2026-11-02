@@ -19,9 +19,8 @@ import { planLaunch } from './launch';
 import { changeSchedule, createSchedules } from './schedules';
 import { agentsSnapshot } from './mapping';
 import { answerTerminal } from './answers';
-
-/** Read-only subset of the built-in Git extension's v1 API. */
-interface GitExtension { enabled: boolean; getAPI(version: 1): { repositories: readonly { rootUri: vscode.Uri; state: { HEAD: { name?: string } | undefined } }[] } }
+import { changeEditor, commitChanges, changesErrorMessage, ChangesGitExtension } from './changes';
+import { WorkspaceChanges } from '@outscaled/protocol';
 
 const pendingKey = 'outscaled.pendingGridOpen';
 type OpenRequest = { kind: 'preset'; workspace: WorkspaceLocation; preset: string } | { kind: 'focus'; workspace: WorkspaceLocation; name: string; focused?: string; openInGrid?: boolean };
@@ -32,6 +31,7 @@ export class TerminalGrid implements vscode.Disposable {
 	private queue = Promise.resolve();
 	private readonly presetStore = new PresetStore();
 	private stopped = false;
+	private focusSequence = 0;
 	private executable?: string;
 	private receipt?: AgentsReceipt;
 	private readonly subscriptions: vscode.Disposable[] = [];
@@ -41,7 +41,7 @@ export class TerminalGrid implements vscode.Disposable {
 		this.memory = new GridMemory(context.workspaceState.get(gridMemoryKey));
 		this.subscriptions.push(selection.onWillChangeSelectedWorkspace(event => { event.waitUntil(this.enqueue(() => this.publish(undefined, event.current))); }),
 			service.onDidChange(() => { void this.enqueue(() => this.publish()); }),
-			selection.onDidChangeSelectedWorkspace(event => { event.waitUntil(this.enqueue(() => this.publish())); }),
+			selection.onDidChangeSelectedWorkspace(event => { event.waitUntil(this.enqueue(async () => { await service.selectChanges(selection.current); await this.publish(); })); }),
 			vscode.commands.registerCommand('outscaled.openGrid', async () => {
 				try {
 					const workspace = this.selection.current;
@@ -60,6 +60,41 @@ export class TerminalGrid implements vscode.Disposable {
 						const workspace = snapshot.workspaces.find(workspace => workspace.id === value.workspace);
 						if (!workspace) {throw new Error(vscode.l10n.t('Workspace is unavailable'));}
 						const location = { host: workspace.server, slug: workspace.name };
+						if (value.action === 'changeDiff' || value.action === 'openChange' || value.action === 'commitChanges') {
+							if (!workspace.selected || !workspace.online) { throw new Error(vscode.l10n.t('Select an online workspace before reviewing changes.')); }
+							return await this.enqueueChanges(async () => {
+								if (this.snapshot().workspaces.find(candidate => candidate.selected)?.id !== workspace.id) { throw new Error(vscode.l10n.t('The selected workspace changed.')); }
+								const response = await this.service.request(location.host, `workspaces/${encodeURIComponent(location.slug)}/changes`);
+								if (!response.ok) { throw new Error(vscode.l10n.t('Changes request failed: HTTP {0}', response.status)); }
+								const changes = WorkspaceChanges.parse(await response.json());
+								const git = vscode.extensions.getExtension<ChangesGitExtension>('vscode.git');
+								const api = workspace.server === 'local' ? (await git?.activate())?.getAPI(1) : undefined;
+								if (value.action === 'commitChanges') {
+									let failure: Error | undefined;
+									try {
+										if (!api) { throw new Error(vscode.l10n.t('The built-in Git extension is unavailable, or this is a VPS workspace. Commit is unavailable.')); }
+										const root = vscode.Uri.parse(workspace.root);
+										const repository = api.getRepository(root) ?? await api.openRepository(root);
+										if (!repository) { throw new Error(vscode.l10n.t('No Git repository is available for this workspace.')); }
+										await commitChanges(repository, root, changes, value.paths, value.message);
+									} catch (error) { failure = error instanceof Error ? error : new Error(String(error)); }
+									try { await this.service.synchronize(location.host); await this.publish(); }
+									catch (error) { if (!failure) { throw error; } this.log(String(error)); }
+									if (failure) { throw failure; }
+									return { version: 1, ok: true };
+								}
+								const file = changes.files.find(file => file.path === value.path);
+								if (!file) { throw new Error(vscode.l10n.t('This file is no longer changed.')); }
+								if (!api && workspace.server === 'local') { throw new Error(vscode.l10n.t('The built-in Git extension is unavailable.')); }
+								if (api) {
+									const root = vscode.Uri.parse(workspace.root);
+									if (!api.getRepository(root) && !await api.openRepository(root)) { throw new Error(vscode.l10n.t('No Git repository is available for this workspace.')); }
+								}
+								const editor = changeEditor(api ?? { toGitUri: uri => uri }, workspace, file);
+								if (value.action === 'openChange') { await vscode.commands.executeCommand('outscaled.agents.openChange', editor); }
+								return { version: 1, ok: true, changeEditor: editor };
+							});
+						}
 						if (value.action === 'presets' || value.action === 'savePreset') {
 							if (value.action === 'savePreset') { await this.enqueue(() => this.presetStore.save(value.workspace, value.name, value.choices)); }
 							return { version: 1, ok: true, presets: [...builtInPresets().map(preset => ({ ...preset, name: vscode.l10n.t(preset.name) })), ...await this.presetStore.load(value.workspace)] };
@@ -93,11 +128,12 @@ export class TerminalGrid implements vscode.Disposable {
 						}
 					}
 					return { version: 1, ok: true };
-				} catch (error) { this.log(String(error)); return { version: 1, ok: false, error: String(error) }; }
+				} catch (error) { const message = changesErrorMessage(error); this.log(message); return { version: 1, ok: false, error: message }; }
 			}));
 		void this.enqueue(async () => {
 			try { this.executable = await findWsPath(vscode.workspace.getConfiguration('outscaled').get<string>('wsPath')); }
 			catch (error) { this.log(String(error)); }
+			await service.selectChanges(selection.current);
 			await this.publish();
 		});
 		const pending = context.globalState.get<OpenRequest>(pendingKey);
@@ -106,9 +142,15 @@ export class TerminalGrid implements vscode.Disposable {
 		}
 	}
 
+	private async enqueueChanges(action: () => Promise<AgentsReceipt>): Promise<AgentsReceipt> {
+		let result: AgentsReceipt = { version: 1, ok: false };
+		await this.enqueue(async () => { result = await action(); });
+		return result;
+	}
+
 	private snapshot(selected = this.selection.current) {
 		const branches = new Map<string, string>();
-		const git = vscode.extensions.getExtension<GitExtension>('vscode.git');
+		const git = vscode.extensions.getExtension<ChangesGitExtension>('vscode.git');
 		if (git?.isActive && git.exports.enabled) {
 			for (const server of this.service.servers.filter(server => server.host === 'local')) {
 				for (const workspace of server.workspaces) {
@@ -135,6 +177,7 @@ export class TerminalGrid implements vscode.Disposable {
 		this.receipt = receipt;
 	}
 	private async open(request: OpenRequest): Promise<void> {
+		const sequence = ++this.focusSequence;
 		if (!this.selection.current || workspaceKey(this.selection.current) !== workspaceKey(request.workspace)) {
 			await this.context.globalState.update(pendingKey, request);
 			await vscode.commands.executeCommand('outscaled.switchWorkspace', request.workspace);
@@ -159,7 +202,8 @@ export class TerminalGrid implements vscode.Disposable {
 				if (request.openInGrid) { this.memory.remember(request.workspace, openGridPane(tree, focus, request.focused)); }
 			}
 			await this.service.synchronize(request.workspace.host);
-			await this.publish(focus ? { workspace: workspaceKey(request.workspace), terminal: focus } : undefined);
+			// A root switch can finish after a newer click in the newly visible grid.
+			await this.publish(focus && sequence === this.focusSequence ? { workspace: workspaceKey(request.workspace), terminal: focus } : undefined);
 		});
 	}
 	private async launch(workspace: WorkspaceLocation, choices: AgentsLaunch, focused?: string): Promise<void> {

@@ -47,6 +47,11 @@ export class DaemonService {
 		await entry.connection.synchronize();
 	}
 
+	async selectChanges(location: { host: string; slug: string } | undefined): Promise<void> {
+		await this.initialized;
+		await Promise.all([...this.connections].map(([host, entry]) => entry.connection.selectChanges(host === location?.host ? location.slug : undefined)));
+	}
+
 	onDidChange(listener: () => void): { dispose(): void } {
 		this.events.on('change', listener);
 		return { dispose: () => { this.events.off('change', listener); } };
