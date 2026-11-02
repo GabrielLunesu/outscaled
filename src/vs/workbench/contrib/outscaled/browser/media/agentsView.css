@@ -1,0 +1,47 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Gabriel Lunesu. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.outscaled-title-controls {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+	-webkit-app-region: no-drag;
+	position: relative;
+	z-index: 2500;
+	color: var(--vscode-titleBar-activeForeground);
+}
+.outscaled-workspace-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
+.outscaled-workspace-branch { color: var(--vscode-descriptionForeground); }
+.outscaled-title-controls button {
+	font: inherit;
+	color: inherit;
+	background: transparent;
+	border: 1px solid var(--vscode-widget-border, transparent);
+	border-radius: 4px;
+	padding: 3px 10px;
+	cursor: pointer;
+}
+.outscaled-title-controls button:hover { background: var(--vscode-toolbar-hoverBackground); }
+.outscaled-title-controls button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 1px; }
+.outscaled-title-controls button[aria-pressed="true"] { background: var(--vscode-button-secondaryBackground); }
+.outscaled-title-controls .outscaled-needs-you { color: var(--vscode-terminal-ansiRed); border-color: var(--vscode-terminal-ansiRed); }
+.outscaled-mode-switch { display: flex; gap: 2px; }
+.outscaled-agents-host { overflow: hidden; }
+.outscaled-agents-grid { width: 100%; height: 100%; box-sizing: border-box; padding: 8px; color: var(--vscode-descriptionForeground); }
+.outscaled-agents-split { display: flex; gap: 8px; width: 100%; height: 100%; min-width: 0; min-height: 0; }
+.outscaled-agents-split[data-direction="down"] { flex-direction: column; }
+.outscaled-agents-split > * { flex: 1 1 0; min-width: 0; min-height: 0; }
+.outscaled-agent-pane { display: flex; flex-direction: column; box-sizing: border-box; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--vscode-widget-border, transparent); border-radius: 6px; background: var(--vscode-terminal-background, var(--vscode-editor-background)); }
+.outscaled-agent-pane:focus-within { border-color: var(--vscode-focusBorder); }
+.outscaled-agent-pane[data-status="needs_input"] { border-color: var(--vscode-terminal-ansiRed); box-shadow: inset 0 0 0 1px var(--vscode-terminal-ansiRed); }
+.outscaled-agent-header { display: flex; align-items: center; gap: 8px; flex: 0 0 32px; padding: 0 10px; color: var(--vscode-foreground); background: var(--vscode-editorGroupHeader-tabsBackground); }
+.outscaled-agent-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.outscaled-runtime-badge { margin-left: auto; font-size: 11px; color: var(--vscode-descriptionForeground); border: 1px solid var(--vscode-widget-border, transparent); border-radius: 3px; padding: 1px 6px; }
+.outscaled-status-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--vscode-disabledForeground); }
+[data-status="working"] > .outscaled-agent-header .outscaled-status-dot { background: var(--vscode-terminal-ansiGreen); }
+[data-status="needs_input"] > .outscaled-agent-header .outscaled-status-dot { background: var(--vscode-terminal-ansiRed); }
+[data-status="crashed"] > .outscaled-agent-header .outscaled-status-dot { background: transparent; color: var(--vscode-terminal-ansiRed); line-height: 8px; font-size: 16px; }
+.outscaled-agent-body { position: relative; flex: 1; min-height: 0; min-width: 0; overflow: hidden; padding: 4px; }

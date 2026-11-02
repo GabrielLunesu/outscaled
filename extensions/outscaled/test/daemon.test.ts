@@ -29,7 +29,7 @@ const status = (newStatus: string, at = '2026-01-01T00:00:01.000Z') => StreamMes
 	workspace: 'demo', terminal: terminal.id, payload: { newStatus }, time: at, acked: false });
 async function until(check: () => boolean, timeout = 7000) {
 	const deadline = Date.now() + timeout;
-	while (!check()) { if (Date.now() > deadline) throw new Error('Timed out'); await delay(20); }
+	while (!check()) { if (Date.now() > deadline) {throw new Error('Timed out');} await delay(20); }
 }
 
 test('TOML accepts CLI targets, comments, quoting, file order and deduplication', () => {
@@ -42,13 +42,13 @@ test('TOML accepts CLI targets, comments, quoting, file order and deduplication'
 	assert.equal(parseServers('server = "wrong"').errors.length, 1);
 	assert.equal(parseServers('extra = true').errors.length, 1);
 	assert.throws(() => parseServers('[[server]'));
-	for (const host of ['-bad', 'ssh://host', 'host command', 'host\ncommand', 'host;command', '$(command)']) assert.throws(() => validateSshTarget(host));
+	for (const host of ['-bad', 'ssh://host', 'host command', 'host\ncommand', 'host;command', '$(command)']) {assert.throws(() => validateSshTarget(host));}
 });
 
 test('local port follows CLI validation', () => {
 	assert.equal(localPort(undefined), 7770);
 	assert.equal(localPort('12345'), 12345);
-	for (const value of ['', '0', '65536', '1.5', '1x', '-1']) assert.throws(() => localPort(value));
+	for (const value of ['', '0', '65536', '1.5', '1x', '-1']) {assert.throws(() => localPort(value));}
 });
 
 test('status, health, workspace invalidation and needs-you counts', () => {
@@ -102,9 +102,9 @@ test('stream precedes snapshot, replays in-flight status, refetches membership a
 		const body = JSON.stringify(value);
 		if (req.url === '/v1/terminals' && delaySnapshot) {
 			delaySnapshot = false;
-			for (const socket of wss.clients) socket.send(JSON.stringify(status('needs_input')));
+			for (const socket of wss.clients) {socket.send(JSON.stringify(status('needs_input')));}
 			setTimeout(() => res.end(body), 100);
-		} else res.end(body);
+		} else {res.end(body);}
 	});
 	const wss = new WebSocketServer({ server, path: '/v1/stream' });
 	wss.on('connection', () => { connected++; });
@@ -117,7 +117,7 @@ test('stream precedes snapshot, replays in-flight status, refetches membership a
 		await until(() => connection.state.online);
 		assert.deepEqual(await (await earlyRead).json(), health, 'startup file clients wait for the shared connection');
 		assert.equal(needsYou(connection.state.terminals), 1);
-		const send = (message: unknown) => { for (const socket of wss.clients) socket.send(JSON.stringify(message)); };
+		const send = (message: unknown) => { for (const socket of wss.clients) {socket.send(JSON.stringify(message));} };
 		send({ type: 'server.health', payload: { ...health, uptimeSec: 99 } });
 		await until(() => connection.state.health?.uptimeSec === 99);
 		terminals = [{ ...terminal, state: 'exited' }];
@@ -125,7 +125,7 @@ test('stream precedes snapshot, replays in-flight status, refetches membership a
 		send({ type: 'workspace.changed', workspace: 'second' });
 		await until(() => connection.state.workspaces.length === 2 && connection.state.terminals[0].state === 'exited');
 		assert.equal(needsYou(connection.state.terminals), 0);
-		for (const socket of wss.clients) socket.close();
+		for (const socket of wss.clients) {socket.close();}
 		await until(() => !connection.state.online);
 		terminals = [{ ...terminal, status: 'working' }];
 		await until(() => connection.state.online && connected === 2);
@@ -137,8 +137,43 @@ test('stream precedes snapshot, replays in-flight status, refetches membership a
 		assert.match(connection.state.error!, /Invalid stream/);
 	} finally {
 		connection.dispose();
-		for (const socket of wss.clients) socket.terminate();
+		for (const socket of wss.clients) {socket.terminate();}
 		await new Promise<void>(resolve => wss.close(() => server.close(() => resolve())));
+	}
+});
+
+test('mutation barrier refetches membership after an older in-flight snapshot', async () => {
+	let terminals: Terminal[] = [terminal];
+	let release: (() => void) | undefined;
+	let hold = false;
+	const server = createServer((req, res) => {
+		const body = JSON.stringify(req.url === '/v1/health' ? health : req.url === '/v1/workspaces' ? [workspace] : terminals);
+		if (req.url === '/v1/terminals' && hold) {
+			hold = false;
+			release = () => res.end(body);
+		} else { res.end(body); }
+	});
+	const stream = new WebSocketServer({ server, path: '/v1/stream' });
+	await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+	const connection = new Connection('local', () => {}, () => {});
+	try {
+		connection.setEndpoint(`http://127.0.0.1:${(server.address() as { port: number }).port}`);
+		await until(() => connection.state.online);
+		hold = true;
+		connection.refresh();
+		await until(() => !!release);
+		terminals = [terminal, { ...terminal, id: 'new', name: 'second', session: 'ws-demo-second' }];
+		const barrier = connection.synchronize();
+		release!();
+		await barrier;
+		assert.deepEqual(connection.state.terminals.map(terminal => terminal.id), ['test-terminal', 'new']);
+		terminals = [];
+		await connection.synchronize();
+		assert.deepEqual(connection.state.terminals, []);
+	} finally {
+		connection.dispose();
+		for (const socket of stream.clients) { socket.terminate(); }
+		await new Promise<void>(resolve => stream.close(() => server.close(() => resolve())));
 	}
 });
 
@@ -167,7 +202,7 @@ test('tunnel restarts after SSH failure and kills a proxy process group on dispo
 	const log = join(root, 'pids');
 	writeFileSync(join(bin, 'ssh'), `#!${process.execPath}\nconst {appendFileSync,existsSync}=require('node:fs');\nconst {spawn}=require('node:child_process');\nif(!existsSync(process.env.TEST_LOG)){appendFileSync(process.env.TEST_LOG,process.pid+'\\n');console.error('test failure');process.exit(255);}\nconst proxy=spawn(process.execPath,['-e','process.on("SIGTERM",()=>{});setInterval(()=>{},1000)'],{stdio:'ignore'});\nappendFileSync(process.env.TEST_LOG,process.pid+','+proxy.pid+'\\n');\nprocess.on('SIGTERM',()=>{});setInterval(()=>{},1000);`, { mode: 0o755 });
 	const failures: string[] = [];
-	const tunnel = new Tunnel('example-alias', { PATH: bin, TEST_LOG: log }, (_url, error) => { if (error) failures.push(error); });
+	const tunnel = new Tunnel('example-alias', { PATH: bin, TEST_LOG: log }, (_url, error) => { if (error) {failures.push(error);} });
 	const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 	try {
 		tunnel.start();

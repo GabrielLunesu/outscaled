@@ -17,6 +17,8 @@ import { ITerminalProfileResolverService } from '../../terminal/common/terminal.
 import { showNotification } from './notifications.js';
 import { ISetTerminalStatusRequest, TerminalStatus, TerminalStatusController } from './terminalStatus.js';
 import './media/terminalStatus.css';
+import './agentsWorkbench.js';
+import './agentsTitleControl.js';
 
 const controller = new TerminalStatusController();
 

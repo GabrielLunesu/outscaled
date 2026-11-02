@@ -23,7 +23,7 @@ export function activate(context: vscode.ExtensionContext): void {
 	registerWorkspacesView(context, daemons, selection);
 	grid = new TerminalGrid(context, daemons, selection, message => output.appendLine(message));
 	context.subscriptions.push(grid);
-	registerNotifications(context, daemons, selection, grid, message => output.appendLine(message));
+	registerNotifications(context, daemons, grid, message => output.appendLine(message));
 }
 
 export function deactivate(): Promise<void> | undefined { return grid?.flush(); }

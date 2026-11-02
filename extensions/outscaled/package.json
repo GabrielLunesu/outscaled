@@ -10,6 +10,7 @@
 	},
 	"activationEvents": [
 		"onStartupFinished",
+		"onCommand:_outscaled.agents.request",
 		"onFileSystem:ws"
 	],
 	"extensionKind": [
