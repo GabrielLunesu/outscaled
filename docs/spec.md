@@ -249,7 +249,7 @@ We don't build on upstream's Agents Window (`src/vs/sessions/`, opened with `wor
 | Panes | VS Code terminals attached to `wsd` tmux sessions (`ws attach`), placed in the agents view | Core |
 | Live status on panes and in the sidebar | As in Phase 3: extensions can't change a terminal's icon after creation, so core does it | Core |
 | Code mode | The workbench's own explorer, editors, search and source control | Upstream, unchanged |
-| Daemon connections, SSH tunnels, workspace switching, presets | The built-in extension, as in Phase 3; the Phase 4 spike decides whether any of it moves into core | `extensions/outscaled/` |
+| Daemon connections, SSH tunnels, workspace switching, presets | The built-in extension, as in Phase 3, sending core what it shows through a typed internal bridge. Core doesn't talk to `wsd` itself: the spike found `wsd` sends no CORS headers, the packaged window's CSP blocks plain HTTP, and SSH tunnels have to be spawned outside the renderer anyway | `extensions/outscaled/` |
 | Needs-you notifications | As in Phase 3: OS toast, Dock bounce and an in-app message with Focus | Core and extension |
 | PC panel | Webview embedding the server's Selkies URL (Phase 5) | Extension |
 | Branding, onboarding, add-server flow | Later; v1 is a personal build | Core |
@@ -307,6 +307,7 @@ Everything an agent needs to start: the decisions, the repo layout, and a done-w
 | Client | Fork of microsoft/vscode at the repo root. From phase 4 the main window is our own agents-first UI, built as core code in `src/vs/workbench/contrib/outscaled/` on VS Code's regular workbench rather than a separate window; the built-in extension keeps the daemon plumbing |
 | Latest line | The newest line an agent wrote: for Claude Code its latest transcript message, for Codex its latest message, for a shell the last non-blank line on screen |
 | Who changed a file | Recorded by `wsd`: Claude Code from its edit-tool hooks; Codex from the files that changed during its turn, so it's approximate while several agents work at once |
+| Agents view host | One custom editor in our core folder shows a workspace's panes. A long-lived owner per workspace keeps the terminal instances, so hiding or closing the view never detaches them. Our title bar controls replace the command center through a small registration hook in `titlebarPart.ts` |
 | Answering prompts | Allow Once and Deny send the key for that option to the pane, only while its screen still shows that permission prompt |
 | Remote access | SSH tunnels opened by the client |
 | CLI server target | `--on local` or an SSH host/alias from `~/.ssh/config`; server details stay outside the repo |
@@ -357,14 +358,14 @@ scripts/serial.sh                    one build or full test suite at a time
 
 **Phase 4 · Agents-first app (local): done when**
 
-- [ ] The app opens on the agents view: the sidebar lists workspaces with status dots and needs-you badges, the main area shows the selected workspace's agents as live terminals, and the title bar holds New agents, the needs-you count, Grid / Focus, Agents / Code and Changes. The chat panel, Copilot, activity bar and status bar appear nowhere, and ⌘1 to ⌘9 switch workspace.
+- [ ] The app opens on the agents view: the sidebar lists workspaces with status dots and needs-you badges, the main area shows the selected workspace's agents as live terminals, and the title bar holds New agents, the needs-you count and Agents / Code. The chat panel, Copilot, activity bar and status bar appear nowhere, and ⌘1 to ⌘9 switch workspace.
 - [ ] New agents (⌘N) opens "2 Claude + 2 Codex" as a 2×2 grid in two clicks, and typing `2x2 claude`, `codex right` or `claude every 30m` fills in the same choices. Replace View moves the replaced agents to the background strip without stopping them.
 - [ ] A pane's menu, ⌘D or ⌥⌘D adds Claude or Codex to its right or below, and Move to Background (⌘M) takes a pane out of the grid while its agent keeps running.
 - [ ] The background strip shows every agent not in the grid with its status dot and latest line, updating live, and clicking one opens it in the grid. A scheduled agent's card shows its prompt, last run and next run, and Run Now starts a run.
 - [ ] Each scheduled run starts a fresh Claude Code or Codex session in a real terminal that you can open in the grid, and its output is kept as the run's log.
 - [ ] A waiting agent turns its pane red with its request, badges its workspace and counts in the title bar. ⌘J jumps to it from any workspace, and Allow Once or Deny in the needs-you list answers a Claude Code permission prompt without opening the pane.
-- [ ] Changes lists each changed file with the agent that changed it and opens its diff in one click. Code mode shows the explorer, editors, search and source control for the workspace, and Agents brings the grid back as it was.
-- [ ] Focus and the All agents board work, and each workspace remembers its layout, which agents are in the grid or the background, and its mode, after switching workspace and after restarting the app.
+- [ ] Changes, in the title bar with a count, lists each changed file with the agent that changed it and opens its diff in one click. Code mode shows the explorer, editors, search and source control for the workspace, and Agents brings the grid back as it was.
+- [ ] Focus (switched with Grid / Focus in the title bar) and the All agents board work, and each workspace remembers its layout, which agents are in the grid or the background, and its mode, after switching workspace and after restarting the app.
 
 **Phase 5 · Desktop and browser: done when**
 
@@ -374,6 +375,8 @@ scripts/serial.sh                    one build or full test suite at a time
 - [ ] An app you install on one VPS appears on that server's desktop and not on the others.
 
 **Biggest risk (phase 4):** reworking the main window on VS Code's regular workbench. Before building the features, run a spike in a throwaway worktree: switch off chat, Copilot, the activity bar and the status bar; add a title bar with New agents and Agents / Code; show a 2×2 grid of live `wsd` terminals as the agents view; and switch to Code mode and back without the terminals restarting. The spike also settles whether the daemon connection stays in the extension or moves into core. If the regular workbench fights this layout, stop and reconsider a separate window like upstream's Agents Window before building on either.
+
+**Spike result (Nov 2, 2026):** passed. Four live terminals in one custom editor survived a round trip to Code mode with the same terminal instances and their full tmux history, and the only upstream change was the title bar hook. It left two jobs for the build: removing every Copilot, chat and account entry point rather than just the panels, and making these terminals work with VS Code's normal terminal commands such as copy, paste and find.
 
 ## Open source workflow
 
