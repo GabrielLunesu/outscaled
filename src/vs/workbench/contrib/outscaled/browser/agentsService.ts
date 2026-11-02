@@ -20,6 +20,7 @@ import { AgentPane, AgentsMode, AgentsReceipt, AgentsRequest, agentsRequestComma
 import { AgentsLayout, layoutTerminals, presetLayout } from '../common/agentsLayout.js';
 import { ITerminalConfigurationService, ITerminalEditorService, ITerminalInstance, ITerminalInstanceService, ITerminalService } from '../../terminal/browser/terminal.js';
 import { registerAgentTerminalHost } from './agentsTerminalHost.js';
+import { agentStatusLabel } from './agentsSidebarModel.js';
 import { openContextMenu } from '../../terminal/browser/terminalContextMenu.js';
 
 export const IAgentsService = createDecorator<IAgentsService>('outscaledAgentsService');
@@ -38,10 +39,6 @@ export interface IAgentsService {
 
 function runtimeName(pane: AgentPane): string {
 	return pane.runtime === 'claude-code' ? localize('agents.runtime.claude', "Claude") : pane.runtime === 'codex' ? localize('agents.runtime.codex', "Codex") : localize('agents.runtime.shell', "Shell");
-}
-
-function statusName(pane: AgentPane): string {
-	return { idle: localize('agents.idle', "Idle"), working: localize('agents.working', "Working"), needs_input: localize('agents.needsInput', "Needs You"), crashed: localize('agents.crashed', "Crashed") }[pane.status];
 }
 
 /** A pane is registered with the native terminal host, but its editor input is never opened. */
@@ -96,7 +93,7 @@ class AgentTerminal extends Disposable {
 		this.name.textContent = pane.name;
 		this.runtime.textContent = runtimeName(pane);
 		this.dot.textContent = pane.status === 'crashed' ? '×' : '';
-		this.dot.setAttribute('aria-label', statusName(pane));
+		this.dot.setAttribute('aria-label', agentStatusLabel(pane.status));
 	}
 	layout(): void {
 		if (this.body.clientWidth && this.body.clientHeight) {
@@ -152,7 +149,7 @@ export class WorkspaceTerminals extends Disposable {
 					element.dataset.terminalId = pane.id;
 					element.dataset.status = pane.status;
 					const header = dom.append(element, dom.$('header.outscaled-agent-header'));
-					dom.append(header, dom.$('span.outscaled-status-dot', { role: 'img', 'aria-label': statusName(pane) }, pane.status === 'crashed' ? '×' : ''));
+					dom.append(header, dom.$('span.outscaled-status-dot', { role: 'img', 'aria-label': agentStatusLabel(pane.status) }, pane.status === 'crashed' ? '×' : ''));
 					dom.append(header, dom.$('span.outscaled-agent-name', undefined, pane.name));
 					dom.append(header, dom.$('span.outscaled-runtime-badge', undefined, runtimeName(pane)));
 					dom.append(element, dom.$('.outscaled-agent-body', undefined, localize('agents.notRunning', "This terminal is not running.")));

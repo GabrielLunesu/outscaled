@@ -16,7 +16,7 @@ export interface AgentPane {
 	launch?: { executable: string; args: string[]; env: Record<string, string> };
 }
 export interface AgentsWorkspace {
-	id: string; name: string; server: string; root: string; selected: boolean; online: boolean; branch?: string;
+	id: string; name: string; server: string; root: string; selected: boolean; online: boolean; branch?: string; path?: string;
 	terminals: AgentPane[]; layout: AgentsLayout;
 }
 export interface AgentsSnapshot { version: 1; workspaces: AgentsWorkspace[]; focus?: { workspace: string; terminal: string } }
@@ -47,7 +47,7 @@ export function isAgentsSnapshot(value: unknown): value is AgentsSnapshot {
 	for (const workspace of value.workspaces) {
 		if (!record(workspace) || !text(workspace.id) || ids.has(workspace.id) || !text(workspace.name) || !text(workspace.server) ||
 			!text(workspace.root) || !/^(file|ws):/.test(workspace.root) || typeof workspace.selected !== 'boolean' || typeof workspace.online !== 'boolean' ||
-			(workspace.branch !== undefined && !text(workspace.branch)) || !Array.isArray(workspace.terminals) || workspace.terminals.length > 4096 ||
+			(workspace.branch !== undefined && !text(workspace.branch)) || (workspace.path !== undefined && !text(workspace.path)) || !Array.isArray(workspace.terminals) || workspace.terminals.length > 4096 ||
 			!workspace.terminals.every(pane) || !isAgentsLayout(workspace.layout)) { return false; }
 		ids.add(workspace.id);
 		if (workspace.selected) { selected++; }

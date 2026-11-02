@@ -21,6 +21,7 @@ import { IPaneCompositePartService } from '../../../services/panecomposite/brows
 import { AgentsMode, AgentsReceipt, AgentsSnapshot, agentsInspectCommand, agentsPublishCommand, isAgentsSnapshot } from '../common/agentsBridge.js';
 import { AgentsInput } from './agentsEditor.js';
 import { IAgentsService } from './agentsService.js';
+import { agentsSidebarId } from './agentsSidebar.js';
 import './media/agentsView.css';
 
 const IAgentsWorkbench = createDecorator<IAgentsWorkbench>('outscaledAgentsWorkbench');
@@ -103,7 +104,7 @@ class AgentsWorkbench extends Disposable implements IAgentsWorkbench {
 				if (!this.input.value || this.input.value.isDisposed() || this.input.value.owner !== owner) { this.input.value = new AgentsInput(owner); }
 				await this.editors.openEditor(this.input.value, { pinned: true });
 			}
-			await this.sidebar.openPaneComposite('workbench.view.extension.outscaled', ViewContainerLocation.Sidebar);
+			await this.sidebar.openPaneComposite(agentsSidebarId, ViewContainerLocation.Sidebar);
 		} else {
 			this.options.clear();
 			if (previousMode !== 'code' || switching) {
@@ -135,7 +136,8 @@ CommandsRegistry.registerCommand('outscaled.agents.mode', async (accessor, mode:
 Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).registerDefaultConfigurations([{ overrides: {
 	'window.commandCenter': true,
 	'workbench.layoutControl.enabled': false,
-	'workbench.startupEditor': 'none'
+	'workbench.startupEditor': 'none',
+	'terminal.integrated.commandsToSkipShell': Array.from({ length: 9 }, (_, index) => `outscaled.switchWorkspace${index + 1}`)
 } }]);
 
 class AgentsStartup implements IWorkbenchContribution {

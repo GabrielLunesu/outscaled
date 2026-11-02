@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Terminal } from '@outscaled/protocol';
@@ -87,10 +87,10 @@ test('mapping isolates workspaces, statuses and local/VPS attach descriptors', (
 		terminals: [terminal, { ...terminal, id: 'other', workspace: 'other' }] })) as ServerState[];
 	const snapshot = agentsSnapshot(servers, { ...workspace, root: 'file:///test/demo' }, memory, '/test/ws', { WSD_PORT: '12345' });
 	assert.ok(isAgentsSnapshot(snapshot));
-	assert.deepEqual(snapshot.workspaces.map(workspace => ({ selected: workspace.selected, terminals: workspace.terminals.map(terminal => terminal.id),
+	assert.deepEqual(snapshot.workspaces.map(workspace => ({ selected: workspace.selected, path: workspace.path, terminals: workspace.terminals.map(terminal => terminal.id),
 		args: workspace.terminals[0].launch?.args })), [
-		{ selected: true, terminals: ['agent-id'], args: ['attach', 'demo', 'claude-1'] },
-		{ selected: false, terminals: ['agent-id'], args: ['attach', 'demo', 'claude-1', '--on', 'example-alias'] }
+		{ selected: true, path: '/test/demo', terminals: ['agent-id'], args: ['attach', 'demo', 'claude-1'] },
+		{ selected: false, path: '/test/demo', terminals: ['agent-id'], args: ['attach', 'demo', 'claude-1', '--on', 'example-alias'] }
 	]);
 });
 
@@ -121,4 +121,14 @@ test('crashed daemon identities retain grid membership without launching an atta
 	assert.ok(isAgentsSnapshot(snapshot));
 	assert.deepEqual({ status: snapshot.workspaces[0].terminals[0].status, launch: snapshot.workspaces[0].terminals[0].launch, ids: layoutTerminals(snapshot.workspaces[0].layout) },
 		{ status: 'crashed', launch: undefined, ids: [terminal.id] });
+});
+
+
+test('workspace UI is contributed by core; extension retains bridge commands only', () => {
+	const { contributes } = JSON.parse(readFileSync('package.json', 'utf8'));
+	assert.deepEqual({ views: contributes.views, containers: contributes.viewsContainers, welcome: contributes.viewsWelcome,
+		commands: contributes.commands.map((command: { command: string }) => command.command), menus: Object.keys(contributes.menus) }, {
+		views: undefined, containers: undefined, welcome: undefined,
+		commands: ['outscaled.switchWorkspace', 'outscaled.openGrid', 'outscaled.focusTerminal'], menus: ['commandPalette']
+	});
 });

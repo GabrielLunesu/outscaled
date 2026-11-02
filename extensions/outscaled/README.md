@@ -1,7 +1,6 @@
 # Outscaled extension
 
-The built-in extension owns one `DaemonService` connection per server. The sidebar
-and the `ws` filesystem provider share those connections and SSH tunnels.
+The built-in extension owns one `DaemonService` connection per server. The core sidebar and agents view receive snapshots through the bridge; the `ws` filesystem provider shares those daemon connections and SSH tunnels.
 
 ## Default colour theme
 
@@ -47,7 +46,11 @@ a no-op; mkdir, delete and rename report that wsd does not support them yet.
 
 ## Agents view (Phase 4, item 1)
 
-The regular workbench opens in Agents mode. One core editor fills the main area with native terminal panes. The existing workspace tree remains the sidebar; Code mode shows the native Explorer and restores its editors and tabs. Agents mode hides tabs and editor title actions. The title control replaces the command center with the selected workspace and available local Git branch, **New agents**, a cross-workspace needs-you count, and **Agents / Code**. Layout controls are disabled. Chat and workbench chrome removal are a separate contribution.
+The regular workbench opens in Agents mode. One core editor fills the main area with native terminal panes.
+
+The core **Workspaces** sidebar replaces the extension tree with one row per workspace in bridge order. Each row shows its name, a badge counting waiting agents, one status dot per terminal (including agents outside the grid), and a muted folder path, branch when known, and VPS server name. Local home paths shorten to `~`. Offline workspaces stay listed, dimmed and labelled Offline. Clicking a row switches workspace; clicking a dot switches and focuses that agent. Arrow keys move through the list and Enter switches; ⌘1 through ⌘9 (Ctrl on other platforms) select the first nine workspaces from anywhere, in either mode. Empty lists explain `ws new <name>`. Status updates retain row and dot nodes and keyboard focus.
+
+Code mode shows the native Explorer and restores its editors and tabs. Agents mode hides tabs and editor title actions. The title control replaces the command center with the selected workspace and available local Git branch, **New agents**, a cross-workspace needs-you count, and **Agents / Code**. Layout controls are disabled. Chat and workbench chrome removal are a separate contribution.
 
 **Outscaled: Open Grid…** and **New agents** open the existing preset picker. The built-ins are **2 Claude + 2 Codex**, **1 Claude + shell**, and shells in six layouts: single, side by side, stacked, 2×2, four across, and two stacked with a full-height pane on the right. Presets fill left to right, then top to bottom; the full-height right pane in 2+1 fills last. Layouts are split trees defined in `src/vs/workbench/contrib/outscaled/common/agentsLayout.ts`, with an insertion operation for later pane menus.
 
@@ -59,7 +62,7 @@ Panes run `ws attach <workspace> <name>`, adding `--on <host>` for VPS workspace
 
 ### Internal bridge
 
-`common/agentsBridge.ts` is the shared, dependency-free version 1 contract, imported by core and bundled into the extension. `_outscaled.agents.publish` sends workspace identity, root, selection, connectivity, optional branch, layout tree, terminal state, and launch descriptors. Core returns a receipt with client process ids and visibility. `_outscaled.agents.inspect` reads current visibility for notification suppression. `_outscaled.agents.request` asks the extension to switch workspace, open the preset picker, or focus a daemon terminal by identity. Invalid versions or payloads are logged and return an error receipt; they cannot reach view construction. Core never connects to a daemon or starts an SSH tunnel.
+`common/agentsBridge.ts` is the shared, dependency-free version 1 contract, imported by core and bundled into the extension. `_outscaled.agents.publish` sends workspace identity, root, selection, connectivity, optional branch and daemon folder path (distinct from virtual VPS roots), layout tree, terminal state, and launch descriptors. Core returns a receipt with client process ids and visibility. `_outscaled.agents.inspect` reads current visibility for notification suppression. `_outscaled.agents.request` asks the extension to switch workspace, open the preset picker, or focus a daemon terminal by identity. Invalid versions or payloads are logged and return an error receipt; they cannot reach view construction. Core never connects to a daemon or starts an SSH tunnel.
 
 `GridMemory` stores validated split trees and known daemon identities in workspace state under `outscaled.agentsGrids.v1`. It reconciles immutable terminal ids, leaving empty slots for removed terminals, and never matches a replacement session by name. Preset and focus requests await a fresh membership snapshot through the existing connection, so a snapshot started before terminal creation cannot remove a new attach client. Per-workspace Code working sets and mode use core's `outscaled.workspaceModes.v1` storage. The initial entry into the dedicated Outscaled window may reload once; pending preset/focus requests resume afterwards.
 
@@ -86,4 +89,4 @@ Build the fixture daemon if `daemon/dist/wsd` is absent:
 scripts/serial.sh node extensions/outscaled/test/ui.mts
 ```
 
-The Playwright acceptance check uses a throwaway profile, config, private `WSD_PORT` and `WSD_TMUX_SOCKET`, and fake Claude/Codex executables that echo typed input. It verifies pane headers, status hooks and needs-you routing across workspaces, native paste/find, unchanged terminal instances and attach process ids after closing Code editors, preserved tmux output, two workspace grids after reload, and all six layout geometries. A private SSH double also verifies `ws attach --on`, input and Code-mode file reads for a VPS workspace, without contacting a real SSH host or the daemon on port 7770. It saves screenshots and proof records to the supplied directory, then stops the app, daemon and private tmux server and removes fixture state. Use `UI_INSPECT_LAUNCH=1` to pause after each launch screenshot for visual inspection; create `launch-inspected` in the evidence directory to continue.
+The Playwright acceptance check uses a throwaway profile, config, private `WSD_PORT` and `WSD_TMUX_SOCKET`, and fake Claude/Codex executables that echo typed input. It verifies the core sidebar and removal of the extension tree, row and dot switching, live badges and hovers, keyboard navigation and workspace shortcuts in both modes, pane headers, status hooks and needs-you routing across workspaces, native paste/find, unchanged terminal instances and attach process ids after closing Code editors, preserved tmux output, two workspace grids after reload, and all six layout geometries. A private SSH double also verifies `ws attach --on`, input and Code-mode file reads for a VPS workspace, without contacting a real SSH host or the daemon on port 7770. It saves screenshots and proof records to the supplied directory, then stops the app, daemon and private tmux server and removes fixture state. Use `UI_INSPECT_LAUNCH=1` to pause after each launch screenshot for visual inspection; create `launch-inspected` in the evidence directory to continue.

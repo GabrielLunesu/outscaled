@@ -13,7 +13,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { WebSocketServer } from 'ws';
 import { Health, StreamMessage, Terminal, Workspace } from '@outscaled/protocol';
 import { Backoff, localPort, parseServers, validateSshTarget } from '../src/daemon/servers';
-import { applyMessage, needsYou, ServerState } from '../src/daemon/state';
+import { applyMessage, ServerState } from '../src/daemon/state';
 import { sshArgs, Tunnel } from '../src/daemon/tunnel';
 import { Connection } from '../src/daemon/connection';
 import { DaemonService } from '../src/daemon/service';
@@ -51,21 +51,17 @@ test('local port follows CLI validation', () => {
 	for (const value of ['', '0', '65536', '1.5', '1x', '-1']) {assert.throws(() => localPort(value));}
 });
 
-test('status, health, workspace invalidation and needs-you counts', () => {
+test('status, health and workspace invalidation', () => {
 	const state: ServerState = { host: 'local', online: true, workspaces: [workspace], terminals: [{ ...terminal }] };
 	assert.equal(applyMessage(state, status('needs_input')), false);
-	assert.equal(needsYou(state.terminals), 1);
+	assert.equal(state.terminals[0].status, 'needs_input');
 	applyMessage(state, status('idle', time)); // An older snapshot/event cannot undo a newer status.
-	assert.equal(needsYou(state.terminals), 1);
+	assert.equal(state.terminals[0].status, 'needs_input');
 	applyMessage(state, status('working', '2026-01-01T00:00:02.000Z'));
-	assert.equal(needsYou(state.terminals), 0);
+	assert.equal(state.terminals[0].status, 'working');
 	assert.equal(applyMessage(state, StreamMessage.parse({ type: 'workspace.changed', workspace: 'demo' })), true);
 	applyMessage(state, StreamMessage.parse({ type: 'server.health', payload: health }));
 	assert.deepEqual(state.health, health);
-	state.terminals = [{ ...terminal, status: 'needs_input' }, { ...terminal, id: 'exited', state: 'exited', status: 'needs_input' },
-		{ ...terminal, id: 'crashed', state: 'crashed', status: 'needs_input' }];
-	assert.equal(needsYou(state.terminals), 1);
-	assert.equal([state, state].reduce((n, s) => n + needsYou(s.terminals), 0), 2);
 	assert.throws(() => applyMessage(state, status('unknown')));
 	state.terminals = [];
 	assert.equal(applyMessage(state, status('idle')), true);
@@ -116,7 +112,7 @@ test('stream precedes snapshot, replays in-flight status, refetches membership a
 		const earlyRead = connection.request('health');
 		await until(() => connection.state.online);
 		assert.deepEqual(await (await earlyRead).json(), health, 'startup file clients wait for the shared connection');
-		assert.equal(needsYou(connection.state.terminals), 1);
+		assert.equal(connection.state.terminals[0].status, 'needs_input');
 		const send = (message: unknown) => { for (const socket of wss.clients) {socket.send(JSON.stringify(message));} };
 		send({ type: 'server.health', payload: { ...health, uptimeSec: 99 } });
 		await until(() => connection.state.health?.uptimeSec === 99);
@@ -124,7 +120,7 @@ test('stream precedes snapshot, replays in-flight status, refetches membership a
 		workspaces = [workspace, { ...workspace, slug: 'second' }];
 		send({ type: 'workspace.changed', workspace: 'second' });
 		await until(() => connection.state.workspaces.length === 2 && connection.state.terminals[0].state === 'exited');
-		assert.equal(needsYou(connection.state.terminals), 0);
+		assert.equal(connection.state.terminals[0].state, 'exited');
 		for (const socket of wss.clients) {socket.close();}
 		await until(() => !connection.state.online);
 		terminals = [{ ...terminal, status: 'working' }];

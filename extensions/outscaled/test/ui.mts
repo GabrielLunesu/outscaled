@@ -29,6 +29,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const require = createRequire(join(root, 'package.json'));
 const { _electron } = require('playwright-core') as typeof import('playwright-core');
 const product = require(join(root, 'product.json'));
+assert.ok(existsSync(join(root, 'daemon/dist/wsd')), 'Build the fixture daemon with: cd daemon && ../scripts/serial.sh bun run build');
 const evidence = resolve(process.argv[2] ?? join(root, '.agent-validation/agents-view')); mkdirSync(evidence, { recursive: true });
 if (process.env.UI_INSPECT_LAUNCH) { rmSync(join(evidence, 'launch-inspected'), { force: true }); }
 const temporary = mkdtempSync(join(tmpdir(), 'outscaled-agents-'));
@@ -118,13 +119,16 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	win.on('console', (message: ConsoleMessage) => { if (message.type() === 'error') {rendererErrors.push(message.text());} });
 	await win.waitForSelector('.outscaled-title-controls');
 	await win.locator('.outscaled-agents-host').waitFor();
-	await win.locator('.sidebar .monaco-list-row').filter({ hasText: 'agents-demo' }).waitFor();
+	await win.locator('.outscaled-workspace-row').filter({ hasText: 'agents-demo' }).waitFor();
+	assert.equal(await win.locator('[id="outscaled.workspaces"], [id="workbench.view.extension.outscaled"]').count(), 0, 'old extension tree is absent');
+	assert.deepEqual(await win.locator('.outscaled-workspace-label').allTextContents(), ['agents-demo', 'second-demo']);
+	assert.deepEqual(await win.locator('.outscaled-workspace-detail').allTextContents(), [folder, second]);
 	await capture('00-launch');
 	if (process.env.UI_INSPECT_LAUNCH) {
 		console.log('Inspect 00-launch.png, then create launch-inspected in the evidence folder.');
 		await until(() => existsSync(join(evidence, 'launch-inspected')), 'visual launch inspection', 180000);
 	}
-	await win.locator('.sidebar .monaco-list-row').filter({ hasText: 'agents-demo' }).locator('.label-name').click();
+	await win.locator('.outscaled-workspace-row').filter({ hasText: 'agents-demo' }).click();
 	await until(async () => await win.locator('.outscaled-workspace-name').innerText() === 'agents-demo', 'selected workspace after dedicated-window reload', 60000);
 	// Inspect object identity and complete xterm buffers through a test-only command.
 	await win.evaluate(async (base: string) => {
@@ -175,16 +179,44 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	await until(async () => (await proof()).length === 2 && (await proof())[0].text?.includes('AGENTS_VIEW'), 'second grid');
 	const secondTerminals = await request('workspaces/second-demo/terminals');
 	const secondGrid = await proof(); await capture('03-second');
+	const row = (name: string) => win.locator('.outscaled-workspace-row').filter({ has: win.locator('.outscaled-workspace-label', { hasText: name }) }).first();
+	const selected = async (name: string) => until(async () => await win.locator('.outscaled-workspace-name').innerText() === name, `sidebar switch to ${name}`);
+	const shortcut = async (number: number, name: string) => {
+		await win.keyboard.press(`Meta+${number}`); await selected(name);
+		// The title updates before the native root change. A queued no-op switch
+		// waits for that shortcut's complete extension/core transition.
+		await command('outscaled.switchWorkspace', { host: 'local', slug: name });
+	};
+	await shortcut(1, 'agents-demo'); await shortcut(2, 'second-demo');
+	await row('agents-demo').focus(); await win.keyboard.press('ArrowDown'); await win.keyboard.press('Enter'); await selected('second-demo');
+	await win.keyboard.press('ArrowUp'); await win.keyboard.press('Enter'); await selected('agents-demo');
+	await win.keyboard.press('ArrowDown'); await win.keyboard.press('Enter'); await selected('second-demo');
+	assert.equal(await row('second-demo').evaluate(element => element === document.activeElement), true, 'list retains keyboard focus after switching');
+	assert.equal(await row('agents-demo').locator('.outscaled-workspace-dot').count(), 4);
+	assert.equal(await row('second-demo').locator('.outscaled-workspace-dot').count(), 2);
+	assert.equal(await row('second-demo').locator('.outscaled-workspace-badge').isVisible(), false);
+	const stableRow = await row('second-demo').elementHandle();
+	const stableDot = await row('agents-demo').locator('.outscaled-workspace-dot').first().elementHandle();
 	await request('hooks/claude-code', { terminal: target.id, payload: { hook_event_name: 'Notification', notification_type: 'permission_prompt' } });
 	await win.locator('.outscaled-needs-you').getByText('1 need you', { exact: true }).waitFor();
+	await until(async () => await row('agents-demo').locator('.outscaled-workspace-badge').innerText() === '1' && await row('agents-demo').locator('.outscaled-workspace-dot').first().getAttribute('data-status') === 'needs_input', 'unselected row badge and red dot');
+	assert.equal(await stableRow!.evaluate(element => element.isConnected && element === document.activeElement), true, 'status update retains row and focus');
+	assert.equal(await stableDot!.evaluate(element => element.isConnected), true, 'status update retains dot');
+	await stableRow!.dispose(); await stableDot!.dispose();
+	await row('agents-demo').locator('.outscaled-workspace-dot').first().hover();
+	await win.locator('.monaco-hover').filter({ hasText: 'claude-1: Needs You' }).waitFor();
 	await capture('04-needs-you-another-workspace');
+	await row('agents-demo').locator('.outscaled-workspace-label').click(); await selected('agents-demo');
+	assert.equal(await row('agents-demo').getAttribute('aria-selected'), 'true');
+	await shortcut(2, 'second-demo');
 	await win.locator('.outscaled-needs-you').click();
 	await until(async () => (await proof()).length === 4 && await win.locator('.outscaled-workspace-name').innerText() === 'agents-demo', 'needs-you cross-workspace focus');
 	await until(async () => await win.evaluate(() => document.activeElement?.closest('.outscaled-agent-pane')?.getAttribute('data-terminal-id')) === target.id, 'waiting pane receives focus');
 	const needsInput = await proof(); assert.notEqual(needsInput[0].dot, working[0].dot);
 	assert.equal(await win.locator('.outscaled-agent-pane').first().evaluate((pane: Element) => getComputedStyle(pane).borderColor === getComputedStyle(pane.querySelector('.outscaled-status-dot')!).backgroundColor), true);
 	await capture('05-needs-you-focused');
-	await win.locator('.outscaled-agent-pane').nth(2).locator('.xterm-helper-textarea').focus();
+	await row('agents-demo').locator('.outscaled-workspace-dot').nth(2).click();
+	await until(async () => await win.evaluate(() => document.activeElement?.closest('.outscaled-agent-pane')?.getAttribute('data-terminal-id')) === terminals[2].id, 'sidebar dot focuses third agent');
 	await win.keyboard.type('HISTORY'); await win.keyboard.press('Enter');
 	await until(async () => (await proof())[2].text.includes('received:HISTORY'), 'third pane typed input');
 	await app.evaluate(({ clipboard }) => clipboard.writeText('PASTED_TO_THIRD'));
@@ -220,6 +252,16 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	await win.locator('.sidebar .explorer-viewlet').waitFor();
 	await win.evaluate(resource => (window as ProbedWindow).__agentsProbe.openFile(resource), pathToFileURL(join(folder, 'README.md')).href);
 	await win.locator('.tabs-container .tab:visible').waitFor(); await capture('07-code');
+	// Both workspaces remember Code mode. The same global bindings override group focus.
+	await shortcut(2, 'second-demo'); await command('outscaled.agents.mode', 'code');
+	await shortcut(1, 'agents-demo');
+	assert.equal(await win.locator('.outscaled-title-controls button[aria-pressed="true"]').innerText(), 'Code');
+	await shortcut(2, 'second-demo');
+	assert.equal(await win.locator('.outscaled-title-controls button[aria-pressed="true"]').innerText(), 'Code');
+	await capture('07a-code-shortcuts');
+	await command('outscaled.agents.mode', 'agents');
+	await shortcut(1, 'agents-demo');
+	await win.locator('.sidebar .explorer-viewlet').waitFor();
 	await command('workbench.view.search');
 	await win.locator('.sidebar .search-view').waitFor();
 	await request('hooks/claude-code', { terminal: target.id, payload: { hook_event_name: 'Stop' } });
@@ -312,6 +354,11 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	await win.locator('.outscaled-agent-pane').first().locator('.xterm-helper-textarea').focus();
 	await win.keyboard.type('PRIVATE_REMOTE_INPUT'); await win.keyboard.press('Enter');
 	await until(async () => (await proof())[0].text?.includes('received:PRIVATE_REMOTE_INPUT'), 'VPS input');
+	const remoteRow = win.locator('.outscaled-workspace-row').filter({ has: win.locator('.outscaled-workspace-label', { hasText: 'vps-demo' }) }).filter({ hasText: 'example-alias' });
+	assert.equal(await remoteRow.locator('.outscaled-workspace-dot').count(), 2);
+	assert.equal(await remoteRow.locator('.outscaled-workspace-detail').innerText(), `example-alias · ${remoteFolder}`);
+	await remoteRow.locator('.outscaled-workspace-dot').nth(1).click();
+	await until(async () => await win.evaluate(() => document.activeElement?.closest('.outscaled-agent-pane')?.getAttribute('data-terminal-id')) === (await remoteRow.locator('.outscaled-workspace-dot').nth(1).getAttribute('data-terminal-id')), 'VPS dot focus');
 	await capture('11-vps-agents');
 	await win.locator('.outscaled-title-controls').getByRole('button', { name: 'Code', exact: true }).click();
 	await win.evaluate(() => (window as ProbedWindow).__agentsProbe.openFile('ws://example-alias/vps-demo/README.md'));
@@ -322,11 +369,16 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	await win.locator('.outscaled-title-controls').getByRole('button', { name: 'Agents', exact: true }).click();
 	await until(async () => (await proof())[0]?.text?.includes('PRIVATE_REMOTE_INPUT'), 'VPS return');
 	const ssh = readFileSync(sshLog, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+	// A lost fixture daemon retains workspace rows and terminal membership, labelled offline.
 	assert.ok(ssh.some(entry => entry.kind === 'extension-tunnel'));
+	daemon.kill('SIGTERM');
+	await until(async () => await remoteRow.evaluate(element => element.classList.contains('offline')) && (await remoteRow.locator('.outscaled-workspace-detail').innerText()).includes(' · Offline · '), 'offline VPS row');
+	assert.equal(await remoteRow.locator('.outscaled-workspace-dot').count(), 2);
+	await capture('13-offline');
 	assert.equal(ssh.filter(entry => entry.kind === 'attach').length, 2);
 	writeFileSync(join(evidence, 'proof.json'), JSON.stringify({ initial, working, needsInput, before, after, terminals, secondTerminals, geometries, remote, ssh, errors }, null, 2));
 	assert.deepEqual(errors, []);
-	console.log('PASS: native commands, identity, tmux history, workspace/reload persistence, needs-you focus, six split geometries');
+	console.log('PASS: core sidebar, live badges, dot/row focus, keyboard navigation, Agents/Code shortcuts, native commands, identity, tmux history, workspace/reload persistence, needs-you focus, six split geometries');
 } finally {
 	writeFileSync(join(evidence, 'page-errors.json'), JSON.stringify(errors, null, 2));
 	writeFileSync(join(evidence, 'renderer-errors.json'), JSON.stringify(rendererErrors, null, 2));
