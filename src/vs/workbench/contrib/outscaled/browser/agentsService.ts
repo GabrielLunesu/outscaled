@@ -21,6 +21,7 @@ import { AgentsLayout, layoutTerminals, presetLayout, sameLayoutStructure, split
 import { ITerminalConfigurationService, ITerminalEditorService, ITerminalInstance, ITerminalInstanceService, ITerminalService } from '../../terminal/browser/terminal.js';
 import { registerAgentTerminalHost } from './agentsTerminalHost.js';
 import { agentRuntimeLabel } from './agentsBackgroundModel.js';
+import { agentRequestText } from './agentsWaitingModel.js';
 import { agentStatusLabel } from './agentsSidebarModel.js';
 import { Sash, Orientation } from '../../../../base/browser/ui/sash/sash.js';
 import { agentsModeActive, createPaneContext } from './agentsPaneContext.js';
@@ -48,6 +49,7 @@ class AgentTerminal extends Disposable {
 	private readonly dot: HTMLElement;
 	private readonly name: HTMLElement;
 	private readonly runtime: HTMLElement;
+	private readonly requestBanner = dom.$('div.outscaled-request-banner');
 	private cancelContextMenu = false;
 
 	constructor(pane: AgentPane, instances: ITerminalInstanceService, editors: ITerminalEditorService,
@@ -68,6 +70,7 @@ class AgentTerminal extends Disposable {
 		this.runtime = dom.append(header, dom.$('span.outscaled-runtime-badge'));
 		const scoped = createPaneContext(this.element, header, pane.id, context, menus, contextMenus, this._register(new DisposableStore()));
 		this.instance.setParentContextKeyService(scoped);
+		this.element.append(this.requestBanner);
 		this.body = dom.append(this.element, dom.$('.terminal-overflow-guard.terminal-editor.outscaled-agent-body'));
 		const menu = this._register(menus.createMenu(MenuId.TerminalInstanceContext, scoped));
 		this._register(this.instance.onDidFocus(() => { terminals.setActiveInstance(this.instance); focused(); }));
@@ -92,6 +95,8 @@ class AgentTerminal extends Disposable {
 	}
 	update(pane: AgentPane): void {
 		this.element.dataset.status = pane.status;
+		this.requestBanner.textContent = agentRequestText(pane);
+		this.requestBanner.hidden = pane.status !== 'needs_input';
 		this.name.textContent = pane.name;
 		this.runtime.textContent = agentRuntimeLabel(pane.runtime);
 		this.dot.textContent = pane.status === 'crashed' ? '×' : '';
@@ -140,7 +145,7 @@ export class WorkspaceTerminals extends Disposable {
 			}
 			terminal?.update(pane);
 		}
-		const topology = JSON.stringify({ placeholders: panes.filter(pane => inGrid.has(pane.id) && !this.panes.has(pane.id)).map(pane => [pane.id, pane.name, pane.runtime, pane.status]) });
+		const topology = JSON.stringify({ placeholders: panes.filter(pane => inGrid.has(pane.id) && !this.panes.has(pane.id)).map(pane => [pane.id, pane.name, pane.runtime, pane.status, agentRequestText(pane)]) });
 		if (topology !== this.topology || !this.renderedTree || !sameLayoutStructure(this.renderedTree, tree)) {
 			this.topology = topology;
 			const restoreFocus = this.element.contains(dom.getActiveElement());
@@ -164,6 +169,7 @@ export class WorkspaceTerminals extends Disposable {
 					dom.append(header, dom.$('span.outscaled-status-dot', { role: 'img', 'aria-label': agentStatusLabel(pane.status) }, pane.status === 'crashed' ? '×' : ''));
 					dom.append(header, dom.$('span.outscaled-agent-name', undefined, pane.name));
 					dom.append(header, dom.$('span.outscaled-runtime-badge', undefined, agentRuntimeLabel(pane.runtime)));
+					if (pane.status === 'needs_input') { dom.append(element, dom.$('.outscaled-request-banner', undefined, agentRequestText(pane))); }
 					createPaneContext(element, header, pane.id, this.context, this.menus, this.contextMenus, this.rendered);
 					this.rendered.add(dom.addDisposableListener(element, 'focusin', () => { this.active = pane.id; }));
 					dom.append(element, dom.$('.outscaled-agent-body', undefined, localize('agents.notRunning', "This terminal is not running.")));
@@ -240,6 +246,10 @@ export class WorkspaceTerminals extends Disposable {
 		return nearest;
 	}
 
+	hasVisiblePane(id: string): boolean {
+		const element = this.panes.get(id)?.element ?? this.placeholders.get(id);
+		return !!element && this.element.contains(element);
+	}
 	focus(id = this.active): void {
 		if (id && !this.panes.has(id)) {
 			const placeholder = this.placeholders.get(id);

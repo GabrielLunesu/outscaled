@@ -28,7 +28,7 @@
 .outscaled-workspace-row.offline { opacity: 0.6; }
 .outscaled-workspace-heading { display: flex; align-items: center; gap: var(--vscode-spacing-size80); }
 .outscaled-workspace-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--vscode-fontWeight-semiBold); }
-.outscaled-workspace-badge { border-radius: var(--vscode-cornerRadius-circle); padding: var(--vscode-spacing-size20) var(--vscode-spacing-size60); font-size: var(--vscode-fontSize-label2); font-weight: var(--vscode-fontWeight-semiBold); background: var(--vscode-activityBarBadge-background); color: var(--vscode-activityBarBadge-foreground); }
+.outscaled-workspace-badge { border-radius: var(--vscode-cornerRadius-circle); padding: var(--vscode-spacing-size20) var(--vscode-spacing-size60); font-size: var(--vscode-fontSize-label2); font-weight: var(--vscode-fontWeight-semiBold); background: var(--vscode-terminal-ansiRed); color: var(--vscode-editor-background); }
 .outscaled-workspace-dots { display: flex; flex-wrap: wrap; gap: var(--vscode-spacing-size20); }
 .outscaled-workspace-dot { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 0; background: transparent; cursor: pointer; }
 .outscaled-workspace-dot::before { content: ''; width: 8px; height: 8px; border-radius: var(--vscode-cornerRadius-circle); background: var(--vscode-disabledForeground); }

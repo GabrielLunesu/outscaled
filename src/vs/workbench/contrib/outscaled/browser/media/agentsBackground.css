@@ -35,3 +35,6 @@
 .outscaled-schedule-edit textarea, .outscaled-schedule-edit input { display: block; box-sizing: border-box; width: 100%; margin-top: var(--vscode-spacing-size40); font: inherit; color: var(--vscode-input-foreground); background: var(--vscode-input-background); border: var(--vscode-strokeThickness) solid var(--vscode-input-border, transparent); border-radius: var(--vscode-cornerRadius-small); padding: var(--vscode-spacing-size60); }
 .outscaled-schedule-edit textarea { resize: vertical; }
 .outscaled-agent-card [hidden], .outscaled-background [hidden] { display: none; }
+
+.outscaled-background-chip[data-status="needs_input"] { border-color: var(--vscode-terminal-ansiRed); color: var(--vscode-terminal-ansiRed); }
+.outscaled-card-request { color: var(--vscode-terminal-ansiRed); }

@@ -19,7 +19,7 @@ import { IEditorGroupsService, IEditorWorkingSet } from '../../../services/edito
 import { IEditorService } from '../../../services/editor/common/editorService.js';
 import { IPaneCompositePartService } from '../../../services/panecomposite/browser/panecomposite.js';
 import { AgentsMode, AgentsReceipt, AgentsSnapshot, agentsInspectCommand, agentsPublishCommand, isAgentsSnapshot } from '../common/agentsBridge.js';
-import { AgentsInput } from './agentsEditor.js';
+import { AgentsEditor, AgentsInput } from './agentsEditor.js';
 import { IAgentsService } from './agentsService.js';
 import { agentsSidebarId } from './agentsSidebar.js';
 import './media/agentsView.css';
@@ -82,7 +82,8 @@ class AgentsWorkbench extends Disposable implements IAgentsWorkbench {
 			}
 			if (snapshot.focus && snapshot.focus.workspace === next) {
 				await this.show('agents');
-				this.agents.owners.get(next!)?.focus(snapshot.focus.terminal);
+				const editor = this.editors.activeEditorPane;
+				if (editor instanceof AgentsEditor) { editor.revealTerminal(snapshot.focus.terminal); }
 			}
 		});
 		return this.agents.receipt();
@@ -139,7 +140,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 	'window.commandCenter': true,
 	'workbench.layoutControl.enabled': false,
 	'workbench.startupEditor': 'none',
-	'terminal.integrated.commandsToSkipShell': ['outscaled.agents.new', ...agentsPaneCommandIds, ...Array.from({ length: 9 }, (_, index) => `outscaled.switchWorkspace${index + 1}`)]
+	'terminal.integrated.commandsToSkipShell': ['outscaled.agents.new', 'outscaled.agents.nextWaiting', ...agentsPaneCommandIds, ...Array.from({ length: 9 }, (_, index) => `outscaled.switchWorkspace${index + 1}`)]
 } }]);
 
 class AgentsStartup implements IWorkbenchContribution {

@@ -152,6 +152,7 @@ test('bridge publishes a focus request after switching for both notification sur
 		const grid = new TerminalGrid(context, service, selection, message => { throw new Error(message); });
 		try {
 			await grid.flush();
+			grid.memory.remember({ host: 'local', slug: 'demo' }, { type: 'pane', terminal: null }, ['agent-id']);
 			handlers.set('outscaled.switchWorkspace', async (workspace: WorkspaceLocation) => { const next = { ...workspace, root: target.root }; await selection.prepare(next); await selection.select(next); });
 			handlers.set('_outscaled.notify', () => surface === 'toast' ? Promise.resolve({ shown: true, clicked: true }) : new Promise(() => {}));
 			handlers.set('message', async () => surface === 'message' ? 'Focus' : undefined);
@@ -161,6 +162,7 @@ test('bridge publishes a focus request after switching for both notification sur
 			const focused = calls.filter(call => call[0] === '_outscaled.agents.publish' && (call[1] as AgentsSnapshot).focus);
 			assert.equal(focused.length, 1);
 			assert.deepEqual((focused[0][1] as AgentsSnapshot).focus, { workspace: '["local","demo"]', terminal: 'agent-id' });
+			assert.deepEqual((focused[0][1] as AgentsSnapshot).workspaces.find(workspace => workspace.server === 'local')?.layout, { type: 'pane', terminal: null }, 'notification Focus leaves background membership intact');
 			assert.ok(calls.findIndex(call => call[0] === 'outscaled.switchWorkspace') < calls.indexOf(focused[0]));
 		} finally { grid.dispose(); selection.dispose(); for (const subscription of context.subscriptions) {subscription.dispose();} }
 	}

@@ -59,3 +59,6 @@
 }
 .outscaled-pane-menu:hover { background: var(--vscode-toolbar-hoverBackground); }
 .outscaled-pane-menu:focus-visible { outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder); }
+
+.outscaled-request-banner { flex: none; padding: var(--vscode-spacing-size80) var(--vscode-spacing-size100); color: var(--vscode-terminal-ansiRed); font-size: var(--vscode-fontSize-body2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outscaled-request-banner[hidden] { display: none; }

@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { z } from 'zod';
-import { Health, LatestLine, ScheduleSummary, StreamMessage, Terminal, TerminalStatus, Workspace } from '@outscaled/protocol';
+import { Health, LatestLine, ScheduleSummary, StreamMessage, Terminal, TerminalStatus, TerminalRequest, Workspace } from '@outscaled/protocol';
 
 export interface ServerState {
 	readonly host: string;
@@ -26,13 +26,14 @@ export function applyMessage(state: ServerState, message: StreamMessage): boolea
 		if (!terminal) { return true; }
 		terminal.latestLine = z.object({ latestLine: LatestLine }).parse(message.payload).latestLine;
 	} else if (message.type === 'terminal.status') {
-		const status = z.object({ newStatus: TerminalStatus }).safeParse(message.payload);
+		const status = z.object({ newStatus: TerminalStatus, request: TerminalRequest.nullable().optional() }).safeParse(message.payload);
 		if (!status.success) { throw new Error('Invalid terminal.status payload'); }
-		const terminal = state.terminals.find(t => t.id === message.terminal);
+		const terminal = state.terminals.find(t => t.id === message.terminal && t.workspace === message.workspace);
 		if (!terminal) { return true; }
 		if (terminal.runtime && (!terminal.statusChangedAt || message.time >= terminal.statusChangedAt)) {
+			if (terminal.status !== status.data.newStatus || !terminal.statusChangedAt) { terminal.statusChangedAt = message.time; }
 			terminal.status = status.data.newStatus;
-			terminal.statusChangedAt = message.time;
+			terminal.request = status.data.newStatus === 'needs_input' ? status.data.request ?? null : null;
 		}
 	}
 	return false;

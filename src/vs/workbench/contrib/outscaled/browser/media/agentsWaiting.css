@@ -1,0 +1,21 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Gabriel Lunesu. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+.outscaled-waiting-list { box-sizing: border-box; width: min(520px, 90vw); max-height: 75vh; overflow: auto; padding: var(--vscode-spacing-size160); color: var(--vscode-editorWidget-foreground); background: var(--vscode-editorWidget-background); border: var(--vscode-strokeThickness) solid var(--vscode-widget-border, transparent); border-radius: var(--vscode-cornerRadius-large); box-shadow: var(--vscode-shadow-lg); }
+.outscaled-waiting-list h3 { margin: 0 0 var(--vscode-spacing-size120); font-size: var(--vscode-fontSize-heading3); font-weight: var(--vscode-fontWeight-semiBold); }
+.outscaled-waiting-row { padding: var(--vscode-spacing-size120); border-radius: var(--vscode-cornerRadius-small); }
+.outscaled-waiting-row + .outscaled-waiting-row { margin-top: var(--vscode-spacing-size80); }
+.outscaled-waiting-row:focus-within, .outscaled-waiting-row:hover { background: var(--vscode-list-hoverBackground); }
+.outscaled-waiting-row header { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--vscode-spacing-size80); }
+.outscaled-waiting-row strong { color: var(--vscode-terminal-ansiRed); font-weight: var(--vscode-fontWeight-semiBold); }
+.outscaled-waiting-row header span { color: var(--vscode-descriptionForeground); font-size: var(--vscode-fontSize-body2); }
+.outscaled-waiting-row p { margin: var(--vscode-spacing-size80) 0; overflow-wrap: anywhere; }
+.outscaled-waiting-actions { display: flex; gap: var(--vscode-spacing-size80); }
+.outscaled-waiting-actions button { font: inherit; padding: var(--vscode-spacing-size40) var(--vscode-spacing-size80); border: var(--vscode-strokeThickness) solid var(--vscode-button-border, transparent); border-radius: var(--vscode-cornerRadius-small); color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); cursor: pointer; }
+.outscaled-waiting-actions button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+.outscaled-waiting-actions button:last-child { margin-left: auto; }
+.outscaled-waiting-actions button:disabled { opacity: 0.5; cursor: default; }
+.outscaled-waiting-list :focus-visible { outline: var(--vscode-strokeThickness) solid var(--vscode-focusBorder); outline-offset: 1px; }
+.outscaled-waiting-list [hidden] { display: none; }
