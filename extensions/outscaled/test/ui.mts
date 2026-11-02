@@ -822,9 +822,29 @@ if(args[0]==='-t'&&args[1]==='example-alias'){
 	await win.keyboard.press('Meta+j');
 	await until(async () => await focusedId() === claudeId && await win.locator('.outscaled-workspace-name').innerText() === 'agents-demo', 'Cmd+J inside terminal crosses workspaces');
 	await drawPermission(bashAgent, 'bash');
+	// Hold the preparation receipt: core already displays the new workspace, but
+	// the extension has not committed its root. A rapid return must join the switch queue.
+	await win.evaluate(async ({ base, workspace }) => {
+		const { CommandsRegistry } = await import(base + 'vs/platform/commands/common/commands.js');
+		const original = CommandsRegistry.getCommand('_outscaled.agents.publish')!.handler;
+		let release!: () => void;
+		const gate = new Promise<void>(resolve => { release = resolve; });
+		const barrier = { entered: false, release };
+		(window as Window & { __jumpBarrier?: typeof barrier }).__jumpBarrier = barrier;
+		const registration = CommandsRegistry.registerCommand('_outscaled.agents.publish', async (accessor: ServicesAccessor, snapshot: import('../../../src/vs/workbench/contrib/outscaled/common/agentsBridge.js').AgentsSnapshot) => {
+			const receipt = await original(accessor, snapshot);
+			if (!barrier.entered && !snapshot.focus && snapshot.workspaces.some(candidate => candidate.selected && candidate.id === workspace)) {
+				barrier.entered = true; await gate; registration.dispose();
+			}
+			return receipt;
+		});
+	}, { base: pathToFileURL(join(root, 'out/')).href.replace('file://', 'vscode-file://vscode-app'), workspace: JSON.stringify(['local', 'second-demo']) });
 	await paneFocus(claudeId); await win.keyboard.press('Meta+j');
+	await until(async () => await win.evaluate(() => (window as Window & { __jumpBarrier?: { entered: boolean } }).__jumpBarrier?.entered === true), 'workspace preparation barrier');
 	await until(async () => await focusedId() === bashAgent.id, 'Cmd+J cycles to newer wait');
-	await win.keyboard.press('Meta+j'); await until(async () => await focusedId() === claudeId, 'Cmd+J wraps to oldest wait');
+	await win.keyboard.press('Meta+j');
+	await win.evaluate(() => (window as Window & { __jumpBarrier?: { release(): void } }).__jumpBarrier?.release());
+	await until(async () => await focusedId() === claudeId, 'Cmd+J wraps to oldest wait');
 	await win.locator('.outscaled-needs-you').getByText('2 need you', { exact: true }).waitFor();
 	await showWaiting();
 	assert.deepEqual(await waitingList.locator('.outscaled-waiting-row').evaluateAll(rows => rows.map(row => row.getAttribute('data-terminal-id'))), [claudeId, bashAgent.id]);
