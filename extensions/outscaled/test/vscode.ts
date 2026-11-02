@@ -15,7 +15,7 @@ export class Disposable {
 export class EventEmitter<T> {
 	private readonly listeners = new Set<(value: T) => void>();
 	readonly event = (listener: (value: T) => void) => { this.listeners.add(listener); return new Disposable(() => { this.listeners.delete(listener); }); };
-	fire(value: T) { for (const listener of this.listeners) listener(value); }
+	fire(value: T) { for (const listener of this.listeners) { listener(value); } }
 	dispose() { this.listeners.clear(); }
 }
 export class FileSystemError extends Error {
@@ -27,3 +27,5 @@ export class FileSystemError extends Error {
 	static NoPermissions(message: string) { return new FileSystemError('NoPermissions', message); }
 	static Unavailable(message: string) { return new FileSystemError('Unavailable', message); }
 }
+
+export const l10n = { t: (message: string, ...args: (string | number)[]) => message.replace(/\{(?<index>\d+)\}/g, (_match, index: string) => String(args[Number(index)])) };

@@ -9,8 +9,11 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Terminal } from '@outscaled/protocol';
-import { presets, expandPreset } from '../src/grid/presets';
-import { ensureTerminal } from '../src/grid/daemonTerminals';
+import { PresetStore, presets, expandPreset } from '../src/grid/presets';
+import { agentCommand, planLaunch } from '../src/grid/launch';
+import { defaultLaunch } from '../../../src/vs/workbench/contrib/outscaled/common/agentsLaunch.js';
+import { spawnSync } from 'node:child_process';
+import { createTerminal, ensureTerminal } from '../src/grid/daemonTerminals';
 import { findWsPath, attachArgs, attachEnv } from '../src/grid/wsPath';
 import { tabStatus } from '../src/grid/status';
 import { GridMemory } from '../src/grid/memory';
@@ -131,4 +134,66 @@ test('workspace UI is contributed by core; extension retains bridge commands onl
 		views: undefined, containers: undefined, welcome: undefined,
 		commands: ['outscaled.switchWorkspace', 'outscaled.openGrid', 'outscaled.focusTerminal'], menus: ['commandPalette']
 	});
+});
+
+
+test('new launches allocate names, retain background membership and never schedule prematurely', () => {
+	const tree = presetLayout('stacked', ['old-a', 'old-b']);
+	assert.deepEqual(planLaunch({ ...defaultLaunch(), run: 'always' }, ['claude-1'], tree), {
+		panes: [{ name: 'claude-2', command: 'claude', alwaysOn: true }], leaving: ['old-a', 'old-b']
+	});
+	assert.deepEqual(planLaunch({ ...defaultLaunch(), where: 'add' }, [], tree).leaving, []);
+	assert.throws(() => planLaunch({ ...defaultLaunch(), where: 'right' }, [], tree), /focused pane/);
+	assert.throws(() => planLaunch({ ...defaultLaunch(), run: 'scheduled' }, [], tree), /not available/);
+	const memory = new GridMemory();
+	memory.remember(workspace, presetLayout('single', ['new-id']), [terminal.id, 'new-id']);
+	const server = { host: 'local', online: true, workspaces: [{ slug: 'demo', path: '/test/demo' }], terminals: [terminal, { ...terminal, id: 'new-id', name: 'claude-2' }] } as ServerState;
+	assert.deepEqual(layoutTerminals(agentsSnapshot([server], undefined, new GridMemory(memory.serialize()), '/test/ws', {}).workspaces[0].layout), ['new-id']);
+});
+
+test('presets round trip every choice in private TOML, isolated by workspace and host', async () => {
+	const directory = mkdtempSync(join(tmpdir(), 'outscaled-presets-'));
+	try {
+		const store = new PresetStore(directory);
+		assert.deepEqual(await store.load('one'), []);
+		const choices = { ...defaultLaunch(), run: 'scheduled' as const, interval: '2h', where: 'add' as const, prompt: 'quotes " \' and\nnewlines $()' };
+		await store.save('one', 'My preset', choices); await store.save('two', 'My preset', defaultLaunch());
+		assert.deepEqual(await new PresetStore(directory).load('one'), [{ name: 'My preset', choices }]);
+		await store.save('one', 'My preset', defaultLaunch());
+		assert.deepEqual(await store.load('two'), [{ name: 'My preset', choices: defaultLaunch() }]);
+		assert.deepEqual(await store.load('one'), [{ name: 'My preset', choices: defaultLaunch() }]);
+		assert.ok(readFileSync(join(directory, 'presets.toml'), 'utf8').includes('[[preset]]'));
+		writeFileSync(join(directory, 'presets.toml'), '[[preset]]\nname = "bad"\n');
+		await assert.rejects(store.load('one'), /Invalid preset/);
+	} finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('first prompts survive POSIX shells as one literal argument', () => {
+	for (const agent of ['claude', 'codex'] as const) {
+		for (const prompt of ['hello', 'single \' and double " quotes', '$(touch pwned)', '`touch pwned`', 'line one\nline two', '-p options']) {
+			const command = agentCommand(agent, prompt)!;
+			const result = spawnSync('/bin/sh', ['-c', `${agent}() { printf '%s\\n' "$#" "$1" "$2"; }; ${command}`], { encoding: 'utf8' });
+			assert.deepEqual({ code: result.status, output: result.stdout }, { code: 0, output: `2\n--\n${prompt}\n` });
+		}
+	}
+	assert.equal(agentCommand('shell', 'ignored'), undefined);
+});
+
+
+test('fresh creation sends alwaysOn and refuses to reuse a concurrent winner', async () => {
+	const bodies: object[] = [];
+	const service = { request: async (_host: string, _path: string, init?: RequestInit) => {
+		bodies.push(JSON.parse(init!.body as string)); return new Response(null, { status: 409 });
+	} };
+	await assert.rejects(createTerminal(service, workspace, { name: 'claude-3', command: 'claude', alwaysOn: true }), /HTTP 409/);
+	assert.deepEqual(bodies, [{ name: 'claude-3', command: 'claude', alwaysOn: true }]);
+});
+
+
+test('initial discovery of many sessions stays within the bridge depth limit', () => {
+	const terminals = Array.from({ length: 130 }, (_, index) => ({ ...terminal, id: `id-${index}`, name: `claude-${index + 1}` }));
+	const server = { host: 'example-alias', online: true, workspaces: [{ slug: 'demo', path: '/test/demo' }], terminals } as ServerState;
+	const snapshot = agentsSnapshot([server], undefined, new GridMemory(), '/test/ws', {});
+	assert.equal(isAgentsSnapshot(snapshot), true);
+	assert.deepEqual(layoutTerminals(snapshot.workspaces[0].layout), terminals.map(terminal => terminal.id));
 });

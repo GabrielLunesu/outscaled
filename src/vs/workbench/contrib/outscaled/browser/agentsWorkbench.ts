@@ -137,7 +137,7 @@ Registry.as<IConfigurationRegistry>(ConfigurationExtensions.Configuration).regis
 	'window.commandCenter': true,
 	'workbench.layoutControl.enabled': false,
 	'workbench.startupEditor': 'none',
-	'terminal.integrated.commandsToSkipShell': Array.from({ length: 9 }, (_, index) => `outscaled.switchWorkspace${index + 1}`)
+	'terminal.integrated.commandsToSkipShell': ['outscaled.agents.new', ...Array.from({ length: 9 }, (_, index) => `outscaled.switchWorkspace${index + 1}`)]
 } }]);
 
 class AgentsStartup implements IWorkbenchContribution {

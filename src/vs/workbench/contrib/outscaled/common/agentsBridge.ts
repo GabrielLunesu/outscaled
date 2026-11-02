@@ -5,6 +5,8 @@
 
 import { AgentsLayout, isAgentsLayout, layoutTerminals } from './agentsLayout.js';
 
+import { AgentsLaunch, AgentsPreset, isAgentsLaunch } from './agentsLaunch.js';
+
 export const agentsBridgeVersion = 1;
 export const agentsPublishCommand = '_outscaled.agents.publish';
 export const agentsInspectCommand = '_outscaled.agents.inspect';
@@ -21,10 +23,13 @@ export interface AgentsWorkspace {
 }
 export interface AgentsSnapshot { version: 1; workspaces: AgentsWorkspace[]; focus?: { workspace: string; terminal: string } }
 export type AgentsRequest = { version: 1; action: 'newAgents' } |
+	{ version: 1; action: 'presets'; workspace: string } |
+	{ version: 1; action: 'savePreset'; workspace: string; name: string; choices: AgentsLaunch } |
+	{ version: 1; action: 'launch'; workspace: string; choices: AgentsLaunch; focused?: string } |
 	{ version: 1; action: 'switch'; workspace: string } |
 	{ version: 1; action: 'focus'; workspace: string; terminal: string };
 export interface AgentsReceipt {
-	version: 1; ok: boolean; error?: string;
+	version: 1; ok: boolean; error?: string; presets?: AgentsPreset[];
 	panes?: { workspace: string; terminal: string; processId?: number; visible: boolean }[];
 }
 
@@ -65,11 +70,15 @@ export function isAgentsSnapshot(value: unknown): value is AgentsSnapshot {
 
 export function isAgentsRequest(value: unknown): value is AgentsRequest {
 	return record(value) && value.version === agentsBridgeVersion && (value.action === 'newAgents' ||
+		(value.action === 'presets' && text(value.workspace)) ||
+		(value.action === 'savePreset' && text(value.workspace) && text(value.name) && value.name.length <= 128 && isAgentsLaunch(value.choices)) ||
+		(value.action === 'launch' && text(value.workspace) && isAgentsLaunch(value.choices) && (value.focused === undefined || text(value.focused))) ||
 		(value.action === 'switch' && text(value.workspace)) || (value.action === 'focus' && text(value.workspace) && text(value.terminal)));
 }
 
 export function isAgentsReceipt(value: unknown): value is AgentsReceipt {
 	return record(value) && value.version === agentsBridgeVersion && typeof value.ok === 'boolean' &&
+		(value.presets === undefined || (Array.isArray(value.presets) && value.presets.length <= 1024 && value.presets.every(preset => record(preset) && text(preset.name) && preset.name.length <= 128 && isAgentsLaunch(preset.choices)))) &&
 		(value.error === undefined || typeof value.error === 'string') && (value.panes === undefined || (Array.isArray(value.panes) && value.panes.every(pane =>
 			record(pane) && text(pane.workspace) && text(pane.terminal) && typeof pane.visible === 'boolean' &&
 			(pane.processId === undefined || (typeof pane.processId === 'number' && Number.isSafeInteger(pane.processId) && pane.processId > 0)))));

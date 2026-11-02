@@ -6,13 +6,21 @@
 import { pathToFileURL } from 'node:url';
 import { hostAuthority } from '../daemon/servers';
 import type { AgentsSnapshot } from '../../../../src/vs/workbench/contrib/outscaled/common/agentsBridge.js';
-import { presetLayout, layoutTerminals, splitPane } from '../../../../src/vs/workbench/contrib/outscaled/common/agentsLayout.js';
+import { AgentsLayout, presetLayout, layoutTerminals, splitPane } from '../../../../src/vs/workbench/contrib/outscaled/common/agentsLayout.js';
 import type { ServerState } from '../daemon/state';
 import type { SelectedWorkspace } from '../workspaces/selection';
 import { workspaceKey } from '../workspaces/identity';
 import { GridMemory } from './memory';
 import { attachArgs } from './wsPath';
 import { tabStatus } from './status';
+
+/** Keep initial discovery shallow even when a server already has many running sessions. */
+function discoveredLayout(ids: string[]): AgentsLayout {
+	if (ids.length <= 1) { return presetLayout('single', ids); }
+	const children: AgentsLayout[] = ids.length <= 64 ? ids.map(terminal => ({ type: 'pane', terminal }))
+		: Array.from({ length: Math.ceil(ids.length / 64) }, (_, index) => discoveredLayout(ids.slice(index * 64, (index + 1) * 64)));
+	return { type: 'split', direction: 'right', children };
+}
 
 /** Pure daemon-to-view mapping, including VPS launch arguments. Offline snapshots retain membership. */
 export function agentsSnapshot(servers: readonly ServerState[], selected: SelectedWorkspace | undefined, memory: GridMemory,
@@ -25,6 +33,11 @@ export function agentsSnapshot(servers: readonly ServerState[], selected: Select
 		let layout = memory.reconcile(location, new Set(terminals.map(terminal => terminal.id))) ?? presetLayout('single', []);
 		// Daemon-created terminals join the grid without replacing existing members.
 		const placed = new Set([...layoutTerminals(layout), ...memory.known(location)]);
+		const discovered = terminals.filter(terminal => terminal.state === 'running' && !placed.has(terminal.id));
+		if (!layoutTerminals(layout).length && discovered.length) {
+			layout = discoveredLayout(discovered.map(terminal => terminal.id));
+			for (const terminal of discovered) { placed.add(terminal.id); }
+		}
 		for (const terminal of terminals.filter(terminal => terminal.state === 'running')) {if (!placed.has(terminal.id)) {
 			const last = layoutTerminals(layout).at(-1);
 			layout = last ? splitPane(layout, last, terminal.id, 'right') : presetLayout('single', [terminal.id]);

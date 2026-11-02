@@ -118,12 +118,13 @@ export class WorkspaceTerminals extends Disposable {
 		private readonly terminals: ITerminalService, private readonly menus: IMenuService, private readonly context: IContextKeyService,
 		private readonly contextMenus: IContextMenuService, private readonly configuration: ITerminalConfigurationService, private readonly reveal: (terminal: string) => Promise<void>) { super(); }
 	update(panes: AgentPane[], tree: AgentsLayout): void {
+		const inGrid = new Set(layoutTerminals(tree));
 		for (const [id] of this.panes) {
 			if (!panes.some(pane => pane.id === id)) { this.panes.delete(id); this.owned.deleteAndDispose(id); this.topology = ''; }
 		}
 		for (const pane of panes) {
 			let terminal = this.panes.get(pane.id);
-			if (!terminal && pane.launch && !this.closed.has(pane.id)) {
+			if (!terminal && pane.launch && inGrid.has(pane.id) && !this.closed.has(pane.id)) {
 				terminal = new AgentTerminal(pane, this.instances, this.editors, this.terminals, this.menus, this.context, this.contextMenus, this.configuration,
 					() => { this.active = pane.id; }, () => { this.closed.add(pane.id); this.panes.delete(pane.id); this.owned.deleteAndDispose(pane.id); this.topology = ''; }, () => this.reveal(pane.id));
 				this.owned.set(pane.id, terminal);
@@ -132,7 +133,7 @@ export class WorkspaceTerminals extends Disposable {
 			}
 			terminal?.update(pane);
 		}
-		const topology = JSON.stringify({ tree, placeholders: panes.filter(pane => !this.panes.has(pane.id)).map(pane => [pane.id, pane.name, pane.runtime, pane.status]) });
+		const topology = JSON.stringify({ tree, placeholders: panes.filter(pane => inGrid.has(pane.id) && !this.panes.has(pane.id)).map(pane => [pane.id, pane.name, pane.runtime, pane.status]) });
 		if (topology !== this.topology) {
 			this.topology = topology;
 			this.placeholders.clear();
@@ -161,7 +162,7 @@ export class WorkspaceTerminals extends Disposable {
 				return element;
 			};
 			this.element.replaceChildren(render(tree));
-			if (!layoutTerminals(tree).length) { this.element.textContent = localize('agents.empty', "Choose New agents to open a terminal grid."); }
+			if (!inGrid.size) { this.element.textContent = localize('agents.empty', "Choose New agents to open a terminal grid."); }
 		}
 		this.setVisible(this.visible);
 	}
@@ -177,7 +178,7 @@ export class WorkspaceTerminals extends Disposable {
 			if (placeholder) { this.active = id; placeholder.focus(); return; }
 		}
 		const pane = id && this.panes.get(id) || [...this.panes.values()].find(pane => this.element.contains(pane.element));
-		pane?.instance.focus(true);
+		if (pane) { this.active = pane.element.dataset.terminalId; pane.instance.focus(true); }
 	}
 	override dispose(): void { this.element.remove(); super.dispose(); }
 }
