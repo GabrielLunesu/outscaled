@@ -15,6 +15,7 @@ import { ThemeIcon } from '../../../../../../base/common/themables.js';
 import { URI } from '../../../../../../base/common/uri.js';
 import * as nls from '../../../../../../nls.js';
 import { ConfirmResult, IDialogService } from '../../../../../../platform/dialogs/common/dialogs.js';
+import product from '../../../../../../platform/product/common/product.js';
 import { IConfigurationService } from '../../../../../../platform/configuration/common/configuration.js';
 import { IInstantiationService } from '../../../../../../platform/instantiation/common/instantiation.js';
 import { ILogService } from '../../../../../../platform/log/common/log.js';
@@ -552,6 +553,9 @@ export class ChatEditorInputSerializer implements IEditorSerializer {
 	}
 
 	deserialize(instantiationService: IInstantiationService, serializedEditor: string): EditorInput | undefined {
+		if (product.configurationPolicy?.['chat.disableAIFeatures'] === true) {
+			return undefined;
+		}
 		try {
 			// Old inputs have a session id for local session
 			// Use revive to properly restore URIs and other special objects in options.target.data

@@ -15,7 +15,7 @@ import { IEditor } from '../../../../editor/common/editorCommon.js';
 import { AbstractEditorCommandsQuickAccessProvider } from '../../../../editor/contrib/quickAccess/browser/commandsQuickAccess.js';
 import { localize, localize2 } from '../../../../nls.js';
 import { isLocalizedString } from '../../../../platform/action/common/action.js';
-import { Action2, IMenuService, MenuId, MenuItemAction, SubmenuItemAction } from '../../../../platform/actions/common/actions.js';
+import { Action2, IMenuService, MenuId, MenuItemAction, SubmenuItemAction, MenuRegistry, isMenuItemAllowed } from '../../../../platform/actions/common/actions.js';
 import { ICommandService } from '../../../../platform/commands/common/commands.js';
 import { IConfigurationChangeEvent, IConfigurationService } from '../../../../platform/configuration/common/configuration.js';
 import { IDialogService } from '../../../../platform/dialogs/common/dialogs.js';
@@ -128,7 +128,7 @@ export class CommandsQuickAccessProvider extends AbstractEditorCommandsQuickAcce
 		return [
 			...this.getCodeEditorCommandPicks(),
 			...this.getGlobalCommandPicks()
-		].map(picks => ({
+		].filter(pick => isMenuItemAllowed({ command: MenuRegistry.getCommand(pick.commandId) ?? { id: pick.commandId, title: pick.commandAlias ?? pick.label } })).map(picks => ({
 			...picks,
 			buttons: [{
 				iconClass: ThemeIcon.asClassName(Codicon.gear),

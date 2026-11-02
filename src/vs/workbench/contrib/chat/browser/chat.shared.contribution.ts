@@ -2886,6 +2886,9 @@ class ChatResolverContribution extends Disposable {
 	}
 
 	private _registerEditor(scheme: string): void {
+		if (product.configurationPolicy?.[ChatAIDisabledSettingId] === true) {
+			return;
+		}
 		this._editorRegistrations.set(scheme, this.editorResolverService.registerEditor(`${scheme}:**/**`,
 			{
 				id: ChatEditorInput.EditorID,

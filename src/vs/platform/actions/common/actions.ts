@@ -476,6 +476,19 @@ export interface IMenuRegistry {
 	getMenuItems(loc: MenuId): Array<IMenuItem | ISubmenuItem>;
 }
 
+const menuItemFilters = new Set<(item: IMenuItem | ISubmenuItem) => boolean>();
+
+/** Register static product restrictions before menus are created, including implicit palette entries. */
+export function registerMenuItemFilter(filter: (item: IMenuItem | ISubmenuItem) => boolean): IDisposable {
+	menuItemFilters.add(filter);
+	return toDisposable(() => menuItemFilters.delete(filter));
+}
+
+/** Whether a command or submenu can be presented by this product. */
+export function isMenuItemAllowed(item: IMenuItem | ISubmenuItem): boolean {
+	return [...menuItemFilters].every(filter => filter(item));
+}
+
 export const MenuRegistry: IMenuRegistry = new class implements IMenuRegistry {
 
 	private readonly _commands = new Map<string, ICommandAction>();
@@ -541,7 +554,7 @@ export const MenuRegistry: IMenuRegistry = new class implements IMenuRegistry {
 			// all commands by default
 			this._appendImplicitItems(result);
 		}
-		return result;
+		return result.filter(isMenuItemAllowed);
 	}
 
 	private _appendImplicitItems(result: Array<IMenuItem | ISubmenuItem>) {

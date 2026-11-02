@@ -1628,6 +1628,7 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 	}
 
 	private setStatusBarHidden(hidden: boolean): void {
+		hidden ||= this.configurationService.inspect<boolean>(LegacyWorkbenchLayoutSettings.STATUSBAR_VISIBLE).policyValue === false;
 		this.stateModel.setRuntimeValue(LayoutStateKeys.STATUSBAR_HIDDEN, hidden);
 
 		// Adjust CSS
@@ -1891,6 +1892,7 @@ export abstract class Layout extends Disposable implements IWorkbenchLayoutServi
 	}
 
 	private setActivityBarHidden(hidden: boolean): void {
+		hidden ||= this.configurationService.inspect<string>(LayoutSettings.ACTIVITY_BAR_LOCATION).policyValue === ActivityBarPosition.HIDDEN;
 		this.stateModel.setRuntimeValue(LayoutStateKeys.ACTIVITYBAR_HIDDEN, hidden);
 		this.mainContainer.classList.toggle(LayoutClasses.ACTIVITYBAR_HIDDEN, hidden);
 		this.workbenchGrid.setViewVisible(this.activityBarPartView, !hidden);

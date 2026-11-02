@@ -278,6 +278,12 @@ export interface IProductConfiguration {
 	readonly commonlyUsedSettings?: string[];
 	readonly aiGeneratedWorkspaceTrust?: IAiGeneratedWorkspaceTrust;
 
+	/** Product capabilities that cannot be enabled by profile or workspace settings. */
+	readonly configurationPolicy?: Readonly<Record<string, boolean | string | number>>;
+	readonly disabledExtensions?: readonly string[];
+	readonly accountsEnabled?: boolean;
+	readonly agentHostEnabled?: boolean;
+
 	readonly defaultChatAgent: IDefaultChatAgent;
 	readonly chatParticipantRegistry?: string;
 	readonly chatSessionRecommendations?: IChatSessionRecommendation[];

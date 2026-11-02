@@ -87,6 +87,16 @@
 			}
 		}
 	],
+	"configurationPolicy": {
+		"chat.disableAIFeatures": true,
+		"editor.inlineSuggest.enabled": false,
+		"workbench.activityBar.location": "hidden",
+		"workbench.activityBar.visible": false,
+		"workbench.statusBar.visible": false
+	},
+	"disabledExtensions": ["github.copilot", "github.copilot-chat"],
+	"accountsEnabled": false,
+	"agentHostEnabled": false,
 	"defaultChatAgent": {
 		"extensionId": "GitHub.copilot",
 		"chatExtensionId": "GitHub.copilot-chat",

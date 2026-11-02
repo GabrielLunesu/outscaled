@@ -18,6 +18,7 @@ import { ConfigurationScope, Extensions, IConfigurationPropertySchema, IConfigur
 import { FileOperation, IFileService } from '../../files/common/files.js';
 import { ILogService } from '../../log/common/log.js';
 import { Registry } from '../../registry/common/platform.js';
+import product from '../../product/common/product.js';
 import { Workspace } from '../../workspace/common/workspace.js';
 
 function freeze<T>(data: T): T {
@@ -782,6 +783,19 @@ export class Configuration {
 		private _memoryConfigurationByResource: ResourceMap<ConfigurationModel>,
 		private readonly logService: ILogService
 	) {
+		this._policyConfiguration = this.withProductPolicy(this._policyConfiguration);
+	}
+
+	/** Product capability restrictions have the same precedence and inspection UX as policy. */
+	private withProductPolicy(configuration: ConfigurationModel): ConfigurationModel {
+		if (!product.configurationPolicy) {
+			return configuration;
+		}
+		const result = configuration.merge();
+		for (const [key, value] of Object.entries(product.configurationPolicy)) {
+			result.setValue(key, value);
+		}
+		return result;
 	}
 
 	getValue(section: string | undefined, overrides: IConfigurationOverrides, workspace: Workspace | undefined): unknown {
@@ -867,7 +881,7 @@ export class Configuration {
 	}
 
 	updatePolicyConfiguration(policyConfiguration: ConfigurationModel): void {
-		this._policyConfiguration = policyConfiguration;
+		this._policyConfiguration = this.withProductPolicy(policyConfiguration);
 	}
 
 	updateApplicationConfiguration(applicationConfiguration: ConfigurationModel): void {
@@ -929,6 +943,7 @@ export class Configuration {
 	}
 
 	compareAndUpdatePolicyConfiguration(policyConfiguration: ConfigurationModel): IConfigurationChange {
+		policyConfiguration = this.withProductPolicy(policyConfiguration);
 		const { added, updated, removed } = compare(this._policyConfiguration, policyConfiguration);
 		const keys = [...added, ...updated, ...removed];
 		if (keys.length) {
