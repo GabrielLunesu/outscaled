@@ -190,12 +190,56 @@ test('a late cross-workspace focus cannot override a newer agent click', async (
 	const visible = new Promise<void>(resolve => { ready = resolve; });
 	try {
 		await grid.flush();
-		handlers.set('outscaled.switchWorkspace', async () => { await selection.prepare(target); await selection.select(target); ready(); await held; });
+		let switches = Promise.resolve();
+		handlers.set('outscaled.switchWorkspace', () => {
+			switches = switches.then(async () => {
+				if (selection.current?.host === target.host) { return; }
+				await selection.prepare(target); await selection.select(target); ready(); await held;
+			});
+			return switches;
+		});
 		const earlier = commands.executeCommand('outscaled.focusTerminal', target, first.name);
 		await visible;
-		await commands.executeCommand('outscaled.focusTerminal', target, second.name);
-		release(); await earlier; await grid.flush();
+		const newer = commands.executeCommand('outscaled.focusTerminal', target, second.name);
+		release(); await Promise.all([earlier, newer]); await grid.flush();
 		assert.deepEqual(calls.filter(call => call[0] === '_outscaled.agents.publish' && (call[1] as AgentsSnapshot).focus).map(call => (call[1] as AgentsSnapshot).focus),
 			[{ workspace: '["local","demo"]', terminal: second.id }]);
+	} finally { release(); grid.dispose(); selection.dispose(); }
+});
+
+
+test('a rapid return during root preparation waits for the serialized switch back', async () => {
+	calls.length = 0; handlers.clear(); settings.clear(); settings.set('wsPath', process.execPath);
+	const f = fixture();
+	for (const server of f.service.servers) { server.workspaces = [{ slug: 'demo', path: '/test/demo' }] as ServerState['workspaces']; }
+	const service = { ...f.service, selectChanges: async () => {}, synchronize: async () => {}, request: async () => Response.json([terminal()]) } as DaemonService;
+	const old = { host: 'local', slug: 'demo', root: 'file:///test/demo' };
+	const target = { ...old, host: 'example-alias' };
+	const selection = new WorkspaceSelection(old);
+	const context = gridContext();
+	let release!: () => void, visible!: () => void;
+	const held = new Promise<void>(resolve => { release = resolve; });
+	const prepared = new Promise<void>(resolve => { visible = resolve; });
+	handlers.set('_outscaled.agents.publish', async (snapshot: AgentsSnapshot) => {
+		if (snapshot.workspaces.some(workspace => workspace.selected && workspace.server === target.host) && selection.current?.host === old.host) { visible(); await held; }
+		return { version: 1, ok: true, panes: [] };
+	});
+	const grid = new TerminalGrid(context, service, selection, message => { throw new Error(message); });
+	let switches = Promise.resolve();
+	handlers.set('outscaled.switchWorkspace', (workspace: WorkspaceLocation) => {
+		switches = switches.then(async () => {
+			if (selection.current?.host === workspace.host) { return; }
+			const next = { ...workspace, root: old.root }; await selection.prepare(next); await selection.select(next);
+		});
+		return switches;
+	});
+	try {
+		await grid.flush();
+		const first = commands.executeCommand('outscaled.focusTerminal', target, 'claude-1');
+		await prepared;
+		const last = commands.executeCommand('outscaled.focusTerminal', old, 'claude-1');
+		release(); await Promise.all([first, last]); await grid.flush();
+		assert.deepEqual([selection.current?.host, calls.filter(call => call[0] === '_outscaled.agents.publish' && (call[1] as AgentsSnapshot).focus).map(call => (call[1] as AgentsSnapshot).focus)],
+			['local', [{ workspace: '["local","demo"]', terminal: 'agent-id' }]]);
 	} finally { release(); grid.dispose(); selection.dispose(); }
 });

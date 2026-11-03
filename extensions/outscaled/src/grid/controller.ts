@@ -180,10 +180,13 @@ export class TerminalGrid implements vscode.Disposable {
 		const sequence = ++this.focusSequence;
 		if (!this.selection.current || workspaceKey(this.selection.current) !== workspaceKey(request.workspace)) {
 			await this.context.globalState.update(pendingKey, request);
-			await vscode.commands.executeCommand('outscaled.switchWorkspace', request.workspace);
-			if (!this.selection.current || workspaceKey(this.selection.current) !== workspaceKey(request.workspace)) {return;}
-			await this.context.globalState.update(pendingKey, undefined);
 		}
+		// Preparation can already display the destination while selection.current
+		// still names the old root. Even a return to that root must join the switch
+		// queue, otherwise its focus is published against the wrong selection.
+		await vscode.commands.executeCommand('outscaled.switchWorkspace', request.workspace);
+		if (!this.selection.current || workspaceKey(this.selection.current) !== workspaceKey(request.workspace)) {return;}
+		await this.context.globalState.update(pendingKey, undefined);
 		await this.enqueue(async () => {
 			this.executable = await findWsPath(vscode.workspace.getConfiguration('outscaled').get<string>('wsPath'));
 			let focus: string | undefined;
